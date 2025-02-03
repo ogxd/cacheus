@@ -78,14 +78,6 @@ use simplelog::*;
 #[tokio::test]
 async fn grpc()
 {
-    CombinedLogger::init(vec![TermLogger::new(
-        LevelFilter::Debug,
-        Config::default(),
-        TerminalMode::Mixed,
-        ColorChoice::Auto,
-    )])
-    .unwrap();
-
     let server = TestServer::new_grpc();
     let cacheus = TestServer::new_cacheus();
 
