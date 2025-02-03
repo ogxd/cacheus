@@ -123,7 +123,7 @@ impl CacheusServer
                 let server = server.clone();
                 if configuration.http2 {
                     tokio::task::spawn(async move {
-                        debug!("Listening for http2 connections...");
+                        trace!("Listening for http2 connections...");
                         let server_for_metrics = server.clone();
                         if let Err(err) = http2::Builder::new(TokioExecutor)
                             .serve_connection(io, service_fn(move |req| CacheusServer::call_async(server.clone(), req)))
@@ -135,7 +135,7 @@ impl CacheusServer
                     });
                 } else {
                     tokio::task::spawn(async move {
-                        debug!("Listening for http1 connections...");
+                        trace!("Listening for http1 connections...");
                         let server_for_metrics = server.clone();
                         if let Err(err) = http1::Builder::new()
                             .serve_connection(io, service_fn(move |req| CacheusServer::call_async(server.clone(), req)))
@@ -211,7 +211,7 @@ impl CacheusServer
         service: Arc<CacheusServer>, request: Request<Incoming>,
     ) -> Result<Response<BufferedBody>, hyper::Error>
     {
-        debug!("Request received");
+        trace!("Request received");
 
         let timestamp = std::time::Instant::now();
         service.metrics.cache_calls.inc();
@@ -224,7 +224,9 @@ impl CacheusServer
                 request.uri().path().hash(&mut hasher);
             }
             if service.configuration.hash_query {
-                request.uri().query().hash(&mut hasher);
+                if let Some(query) = request.uri().query() {
+                    query.hash(&mut hasher);
+                }
             }
             // Sometimes, we can't rely on the request body.
             // For example, protobuf maps are serialized in a non-deterministic order.
@@ -249,7 +251,7 @@ impl CacheusServer
 
             cached.store(false, Ordering::Relaxed);
 
-            debug!("Cache miss");
+            trace!("Cache miss");
             service.metrics.cache_misses.inc();
 
             let target_host = match request.headers().get("x-target-host") {
@@ -260,6 +262,8 @@ impl CacheusServer
             if target_host.is_empty() {
                 panic!("Missing X-Target-Host header! Can't forward the request.");
             }
+
+            debug!("Forwarding request to host: '{}' with path: '{}' and query '{}'", target_host,request.uri().path(), request.uri().query().unwrap_or(""));
             
             let target_uri = Uri::builder()
                 .scheme("https")
@@ -267,8 +271,6 @@ impl CacheusServer
                 .path_and_query(request.uri().path_and_query().unwrap().clone())
                 .build()
                 .expect("Failed to build target URI");
-
-            info!("Headers send to {}", target_uri);
 
             // Copy path and query
             let mut forwarded_req = Request::builder()
@@ -284,19 +286,18 @@ impl CacheusServer
             // Remove accept-encoding header, as we don't want to handle compressed responses
             headers.remove("accept-encoding");
 
-            // Log all headers
-            for (name, value) in request.headers() {
-                info!("- {}: {}", name, value.to_str().unwrap());
-            }
+            // Log all headers in a single log entry
+            let headers_log: Vec<String> = request.headers().iter().map(|(name, value)| format!("{}: {}", name, value.to_str().unwrap())).collect();
+            debug!("Request headers: \n{}", headers_log.join("\n"));
 
             let body = request.into_body();
 
-            debug!("Buffering request...");
+            trace!("Buffering request...");
 
             // Copy body
             let forwarded_req = forwarded_req.body(body).expect("Failed building request");
 
-            debug!("Forwarding request");
+            trace!("Forwarding request");
 
             // Await the response...
             let response: Response<Incoming> = service
@@ -311,9 +312,9 @@ impl CacheusServer
 
             // Replace strings in response, but only if content type is utf8 text
             if let Some(content_type) = parts.headers.get("content-type") {
-                info!("Content type: {:?}", content_type);
+                debug!("Content type: {:?}", content_type);
                 if content_type.to_str().unwrap().contains("json") {
-                    info!("Replacing strings in response...");
+                    debug!("Replacing strings in response...");
                     let content_length = buffered_response_body.replace_strings(&service.configuration.response_replacement_strings);
                     // Response length may have changed, so we need to update the content-length header
                     parts.headers.insert("content-length", content_length.to_string().parse().unwrap());
@@ -339,7 +340,7 @@ impl CacheusServer
             Ok(response) => {
                 let response = response.as_ref();
                 let response: Response<BufferedBody> = response.clone();
-                debug!("Received response from target with status: {:?}", response);
+                trace!("Received response from target with status: {:?}", response);
                 Ok(response)
             }
             Err(e) => Err(e),

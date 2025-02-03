@@ -34,7 +34,7 @@ impl<T: Body + ?Sized> Future for BufferBody<T>
         let mut me = self.project();
 
         loop {
-            debug!("Polling...");
+            trace!("Polling...");
 
             let frame = futures_core::ready!(me.body.as_mut().poll_frame(cx));
 
