@@ -2,7 +2,6 @@ include!("../../proto/helloworld.rs");
 
 use greeter_server::{Greeter, GreeterServer};
 use cacheus::{self, CacheusServer};
-use simplelog::*;
 use tokio::sync::oneshot;
 use tonic::{transport::Server, Request, Response, Status};
 
@@ -61,14 +60,6 @@ impl TestServer
 #[tokio::main]
 async fn main()
 {
-    CombinedLogger::init(vec![TermLogger::new(
-        LevelFilter::Debug,
-        Config::default(),
-        TerminalMode::Mixed,
-        ColorChoice::Auto,
-    )])
-    .unwrap();
-
     let server = TestServer::new_grpc();
 
     CacheusServer::start_from_config_file("benches/qps/config.yaml").await;

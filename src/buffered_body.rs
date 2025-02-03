@@ -58,10 +58,10 @@ pub struct BufferedBody
 
 impl BufferedBody
 {
-    pub fn replace_strings(&mut self, map: &HashMap<String, String>)
+    pub fn replace_strings(&mut self, map: &HashMap<String, String>) -> usize
     {
         if map.len() == 0 {
-            return;
+            return self.bufs.len();
         }
 
         let mut body_utf8: String = String::from_utf8(self.bufs.to_vec() /* we could avoid a copy here */).unwrap();
@@ -71,6 +71,8 @@ impl BufferedBody
         }
 
         self.bufs = BytesMut::from(body_utf8.as_bytes());
+
+        return self.bufs.len();
     }
 
     /// If there is a trailers frame buffered, returns a reference to it.

@@ -1,19 +1,10 @@
 use cacheus::{self, CacheusServer};
-use simplelog::*;
 use warp::Filter;
 use futures::join;
 
 #[tokio::main]
 async fn main()
 {
-    CombinedLogger::init(vec![TermLogger::new(
-        LevelFilter::Debug,
-        Config::default(),
-        TerminalMode::Mixed,
-        ColorChoice::Auto,
-    )])
-    .unwrap();
-
     let echo = warp::any().map(|| "Hello, World!");
 
     let server_fut = warp::serve(echo)

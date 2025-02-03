@@ -10,6 +10,7 @@ mod metrics;
 
 use std::hash::Hash;
 use std::net::SocketAddr;
+use std::str::FromStr;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Duration;
@@ -30,7 +31,9 @@ use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_tls::HttpsConnector;
 use hyper_util::client::legacy::Client;
 use hyper_util::rt::TokioIo;
+use log::LevelFilter;
 use metrics::Metrics;
+use simplelog::{ColorChoice, CombinedLogger, Config, TermLogger, TerminalMode};
 use tokio::net::TcpListener;
 use std::sync::atomic::Ordering;
 
@@ -53,7 +56,6 @@ impl CacheusServer
 
     pub async fn start_from_config_file(config_file: &str)
     {
-        info!("Reading configuration from file: {}", config_file);
         let contents = std::fs::read_to_string(config_file).expect("Could not find configuration file");
         let configuration: CacheusConfiguration =
             serde_yaml::from_str::<CacheusConfiguration>(&contents).expect("Could not parse configuration file");
@@ -62,6 +64,14 @@ impl CacheusServer
 
     pub async fn start(configuration: CacheusConfiguration) -> Result<(), std::io::Error>
     {
+        CombinedLogger::init(vec![TermLogger::new(
+            LevelFilter::from_str(configuration.minimum_log_level.as_str()).unwrap(),
+            Config::default(),
+            TerminalMode::Mixed,
+            ColorChoice::Auto,
+        )])
+        .unwrap();
+
         info!("Starting Cacheus server...");
 
         let connector = match configuration.https {
@@ -288,11 +298,19 @@ impl CacheusServer
                 .expect("Failed to send request");
 
             // Buffer response body so that we can cache it and return it
-            let (parts, body) = response.into_parts();
+            let (mut parts, body) = response.into_parts();
             let mut buffered_response_body = BufferedBody::collect_buffered(body).await.unwrap();
 
-            // Replace strings in response
-            buffered_response_body.replace_strings(&service.configuration.response_replacement_strings);
+            // Replace strings in response, but only if content type is utf8 text
+            if let Some(content_type) = parts.headers.get("content-type") {
+                info!("Content type: {:?}", content_type);
+                if content_type.to_str().unwrap().contains("json") {
+                    info!("Replacing strings in response...");
+                    let content_length = buffered_response_body.replace_strings(&service.configuration.response_replacement_strings);
+                    // Response length may have changed, so we need to update the content-length header
+                    parts.headers.insert("content-length", content_length.to_string().parse().unwrap());
+                }
+            }
 
             let status = parts.status;
             debug!("Received response from target with status: {:?}", status);
