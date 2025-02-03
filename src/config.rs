@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize, Clone)]
@@ -35,6 +37,9 @@ pub struct CacheusConfiguration
 
     #[serde(default = "default_max_idle_connections_per_host")]
     pub max_idle_connections_per_host: u16,
+
+    #[serde(default = "default_response_replacement_strings")]
+    pub response_replacement_strings: HashMap<String, String>,
 }
 
 // https://github.com/serde-rs/serde/issues/368 🙄
@@ -81,6 +86,10 @@ fn default_healthcheck_port() -> u16
 fn default_max_idle_connections_per_host() -> u16
 {
     4
+}
+fn default_response_replacement_strings() -> HashMap<String, String>
+{
+    HashMap::new()
 }
 
 #[cfg(test)]

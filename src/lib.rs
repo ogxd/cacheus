@@ -289,7 +289,10 @@ impl CacheusServer
 
             // Buffer response body so that we can cache it and return it
             let (parts, body) = response.into_parts();
-            let buffered_response_body = BufferedBody::collect_buffered(body).await.unwrap();
+            let mut buffered_response_body = BufferedBody::collect_buffered(body).await.unwrap();
+
+            // Replace strings in response
+            buffered_response_body.replace_strings(&service.configuration.response_replacement_strings);
 
             let status = parts.status;
             debug!("Received response from target with status: {:?}", status);

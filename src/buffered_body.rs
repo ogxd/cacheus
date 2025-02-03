@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::convert::Infallible;
 use std::hash::Hash;
 use std::pin::Pin;
@@ -57,6 +58,21 @@ pub struct BufferedBody
 
 impl BufferedBody
 {
+    pub fn replace_strings(&mut self, map: &HashMap<String, String>)
+    {
+        if map.len() == 0 {
+            return;
+        }
+
+        let mut body_utf8: String = String::from_utf8(self.bufs.to_vec() /* we could avoid a copy here */).unwrap();
+
+        for (key, value) in map {
+            body_utf8 = body_utf8.replace(key, &value);
+        }
+
+        self.bufs = BytesMut::from(body_utf8.as_bytes());
+    }
+
     /// If there is a trailers frame buffered, returns a reference to it.
     /// Returns `None` if the body contained no trailers.
     pub fn trailers(&self) -> Option<&HeaderMap>
