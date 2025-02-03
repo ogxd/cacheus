@@ -43,6 +43,15 @@ pub struct CacheusConfiguration
 
     #[serde(default = "default_minimum_log_level")]
     pub minimum_log_level: String,
+
+    #[serde(default = "default_hash_path")]
+    pub hash_path: bool,
+
+    #[serde(default = "default_hash_query")]
+    pub hash_query: bool,
+
+    #[serde(default = "default_hash_body")]
+    pub hash_body: bool,
 }
 
 // https://github.com/serde-rs/serde/issues/368 🙄
@@ -97,6 +106,18 @@ fn default_response_replacement_strings() -> HashMap<String, String>
 fn default_minimum_log_level() -> String
 {
     "info".to_string()
+}
+fn default_hash_path() -> bool
+{
+    true
+}
+fn default_hash_query() -> bool
+{
+    true
+}
+fn default_hash_body() -> bool
+{
+    true
 }
 
 #[cfg(test)]

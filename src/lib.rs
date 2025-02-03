@@ -220,8 +220,12 @@ impl CacheusServer
             // Hash request content
             let mut hasher = GxHasher::with_seed(123);
             // Different path/query means different key
-            request.uri().path().hash(&mut hasher);
-            request.uri().query().hash(&mut hasher);
+            if service.configuration.hash_path {
+                request.uri().path().hash(&mut hasher);
+            }
+            if service.configuration.hash_query {
+                request.uri().query().hash(&mut hasher);
+            }
             // Sometimes, we can't rely on the request body.
             // For example, protobuf maps are serialized in a non-deterministic order.
             // https://gist.github.com/kchristidis/39c8b310fd9da43d515c4394c3cd9510
@@ -231,7 +235,9 @@ impl CacheusServer
                 Some(value) => value.as_bytes().hash(&mut hasher),
                 // Otherwise hash the request body
                 None => {
-                    request.body().hash(&mut hasher);
+                    if service.configuration.hash_body {
+                        request.body().hash(&mut hasher);
+                    }
                 }
             }
             hasher.finish_u128()
