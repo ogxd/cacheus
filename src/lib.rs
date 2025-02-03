@@ -275,6 +275,8 @@ impl CacheusServer
             // Add host header
             headers.extend(request.headers().iter().map(|(k, v)| (k.clone(), v.clone())));
             headers.insert("Host", target_host.parse().unwrap());
+            // Remove accept-encoding header, as we don't want to handle compressed responses
+            headers.remove("accept-encoding");
 
             // Log all headers
             for (name, value) in request.headers() {
