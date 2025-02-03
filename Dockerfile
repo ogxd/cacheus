@@ -1,14 +1,14 @@
-FROM rust:1.77-alpine3.19 as builder
+FROM rust:1.84-slim-bullseye as builder
 
-RUN apk add --no-cache musl-dev pkgconfig openssl-dev
-ENV PKG_CONFIG_PATH=/usr/lib/pkgconfig
+RUN apt-get update
+RUN apt-get install pkg-config libssl-dev -y
 
 WORKDIR /usr/src/cacheus
 COPY . .
 
 RUN RUSTFLAGS="-C target-feature=+aes" cargo install --path .
 
-FROM alpine:3.19
+FROM debian:bullseye-slim
 
 COPY --from=builder /usr/local/cargo/bin/cacheus /usr/local/bin/cacheus
 
