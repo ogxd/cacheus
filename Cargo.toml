@@ -1,14 +1,14 @@
 [package]
-name = "risu"
+name = "cacheus"
 version = "0.1.0"
 edition = "2021"
 
 [[bin]]
-name = "risu"
+name = "cacheus"
 path = "src/main.rs"
 
 [lib]
-name = "risu"
+name = "cacheus"
 
 [[test]]
 name = "tests"
@@ -26,8 +26,13 @@ harness = false
 name = "qps_http"
 harness = false
 
+[[example]]
+name = "nuget_cache"
+harness = false
+
 [dependencies]
 hyper = { version = "1.2", features = ["full"] }
+hyper-tls = "0.6.0"
 tokio = { version = "1", features = ["full"] }
 bytes = "1.0"
 simplelog = "0.12.2"

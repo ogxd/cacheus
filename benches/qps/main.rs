@@ -1,7 +1,7 @@
 include!("../../proto/helloworld.rs");
 
 use greeter_server::{Greeter, GreeterServer};
-use risu::{self, RisuServer};
+use cacheus::{self, CacheusServer};
 use simplelog::*;
 use tokio::sync::oneshot;
 use tonic::{transport::Server, Request, Response, Status};
@@ -71,7 +71,7 @@ async fn main()
 
     let server = TestServer::new_grpc();
 
-    RisuServer::start_from_config_file("benches/qps/config.yaml").await;
+    CacheusServer::start_from_config_file("benches/qps/config.yaml").await;
 
     server.shutdown().await;
 }

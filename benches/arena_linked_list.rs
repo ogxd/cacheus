@@ -1,7 +1,7 @@
 use std::collections::LinkedList;
 
 use criterion::{criterion_group, criterion_main, Criterion};
-use risu::ArenaLinkedList;
+use cacheus::ArenaLinkedList;
 
 fn benchmark(c: &mut Criterion)
 {

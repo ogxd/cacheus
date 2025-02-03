@@ -1,0 +1,5 @@
+default_target_host: "www.nuget.org"
+listening_port: 4002
+prometheus_port: 4004
+https: true
+http2: false

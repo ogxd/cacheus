@@ -4,7 +4,7 @@ use std::{clone, time::Duration};
 
 use greeter_client::GreeterClient;
 use greeter_server::{Greeter, GreeterServer};
-use risu::{self, RisuServer};
+use cacheus::{self, CacheusServer};
 use tokio::sync::oneshot;
 use tonic::{metadata::MetadataMap, metadata::MetadataValue, transport::Server, Extensions, Request, Response, Status};
 use warp::Filter;
@@ -42,9 +42,9 @@ impl TestServer
             .serve("127.0.0.1:3002".parse().unwrap()))
     }
 
-    pub fn new_risu() -> Self
+    pub fn new_cacheus() -> Self
     {
-        Self::start(RisuServer::start_from_config_file("tests/config.yaml"))
+        Self::start(CacheusServer::start_from_config_file("tests/config.yaml"))
     }
 
     fn start<F>(fut: F) -> Self
@@ -87,7 +87,7 @@ async fn grpc()
     .unwrap();
 
     let server = TestServer::new_grpc();
-    let risu = TestServer::new_risu();
+    let cacheus = TestServer::new_cacheus();
 
     // Warmup
     tokio::time::sleep(Duration::from_secs(1)).await;
@@ -133,7 +133,7 @@ async fn grpc()
     tokio::join!(response1, response2, response3);
 
     server.shutdown().await;
-    risu.shutdown().await;
+    cacheus.shutdown().await;
 
     // Check grpc message content
     // assert!(response1.get_ref().message == "Hello Tonic!");
@@ -146,14 +146,14 @@ async fn grpc()
 // {
     
 
-//     let risu = TestServer::new_risu();
+//     let cacheus = TestServer::new_cacheus();
 
 //     // Warmup
 //     tokio::time::sleep(Duration::from_secs(1)).await;
 
 
 //     server.shutdown().await;
-//     risu.shutdown().await;
+//     cacheus.shutdown().await;
 
 //     // Check grpc message content
 //     assert!(response.get_ref().message == "Hello Tonic!");

@@ -39,8 +39,8 @@ jobs:
 
       - name: Docker Build
         shell: bash
-        run: docker build -f Dockerfile -t ghcr.io/ogxd/risu:latest -t ghcr.io/ogxd/risu:${{ github.ref_name }} .
+        run: docker build -f Dockerfile -t ghcr.io/ogxd/cacheus:latest -t ghcr.io/ogxd/cacheus:${{ github.ref_name }} .
 
       - name: Docker Push
         shell: bash
-        run: docker push --all-tags ghcr.io/ogxd/risu
+        run: docker push --all-tags ghcr.io/ogxd/cacheus

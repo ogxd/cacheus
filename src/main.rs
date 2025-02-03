@@ -1,4 +1,4 @@
-use risu::RisuServer;
+use cacheus::CacheusServer;
 use simplelog::*;
 
 #[tokio::main]
@@ -20,5 +20,5 @@ async fn main()
     )])
     .unwrap();
 
-    RisuServer::start_from_config_file("/etc/risu.yml").await;
+    CacheusServer::start_from_config_file("/etc/cacheus.yml").await;
 }
