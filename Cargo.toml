@@ -32,7 +32,7 @@ harness = false
 
 [dependencies]
 hyper = { version = "1.2", features = ["full"] }
-hyper-tls = "0.6.0"
+hyper-tls = { version = "0.6.0", features = ["alpn"] }
 tokio = { version = "1", features = ["full"] }
 bytes = "1.0"
 simplelog = "0.12.2"
