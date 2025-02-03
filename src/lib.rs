@@ -323,7 +323,7 @@ impl CacheusServer
             let status = parts.status;
             debug!("Received response from target with status: {:?}", status);
 
-            Ok((Response::from_parts(parts, buffered_response_body), status.is_success() /* only cache if status is successful */))
+            Ok((Response::from_parts(parts, buffered_response_body), status.is_informational() || status.is_success() || status.is_redirection() /* only cache if status is successful */))
         };
 
         let (parts, body) = request.into_parts();
