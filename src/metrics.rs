@@ -19,7 +19,7 @@ impl Metrics
     {
         let metrics = Metrics {
             request_duration: HistogramVec::new(
-                HistogramOpts::new("request_duration", "Request duration (s)").buckets(vec![
+                HistogramOpts::new("cacheus:request_duration", "Request duration (s)").buckets(vec![
                     0.00001, /* 10μs */
                     0.00002, 0.00005, 0.0001, /* 100μs */
                     0.0002, 0.0005, 0.001, /* 1ms */
@@ -30,9 +30,9 @@ impl Metrics
                 ]), &["cached"]
             )
             .unwrap(),
-            cache_calls: Counter::with_opts(Opts::new("cache_calls", "Number of cache calls")).unwrap(),
-            cache_misses: Counter::with_opts(Opts::new("cache_misses", "Number of cache misses")).unwrap(),
-            connection_reset: Counter::with_opts(Opts::new("connection_reset", "Number of connection reset (RST)"))
+            cache_calls: Counter::with_opts(Opts::new("cacheus:calls_total", "Number of cache calls")).unwrap(),
+            cache_misses: Counter::with_opts(Opts::new("cacheus:misses_total", "Number of cache misses")).unwrap(),
+            connection_reset: Counter::with_opts(Opts::new("cacheus:connection_reset_total", "Number of connection reset (RST)"))
                 .unwrap(),
             registry: Registry::new(),
         };

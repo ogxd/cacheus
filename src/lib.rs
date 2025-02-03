@@ -291,9 +291,10 @@ impl CacheusServer
             let (parts, body) = response.into_parts();
             let buffered_response_body = BufferedBody::collect_buffered(body).await.unwrap();
 
-            debug!("Received response from target with status: {:?}", parts.status);
+            let status = parts.status;
+            debug!("Received response from target with status: {:?}", status);
 
-            Ok(Response::from_parts(parts, buffered_response_body))
+            Ok((Response::from_parts(parts, buffered_response_body), status.is_success() /* only cache if status is successful */))
         };
 
         let (parts, body) = request.into_parts();

@@ -67,18 +67,21 @@ where
         K: Clone,
         Kfac: Fn(&I) -> K,
         Vfac: FnOnce(I) -> Fut,
-        Fut: Future<Output = Result<V, E>>,
+        Fut: Future<Output = Result<(V, bool), E>>,
     {
         let key = key_factory(&item);
         match self.try_get2(&key) {
             Some(value) => return Ok(value),
             None => {
                 match value_factory(item).await {
-                    Ok(value) => {
+                    Ok((value, cache)) => {
                         let a_value = Arc::new(value);
-                        // This might fail if the key was added by another thread, but we don't care
-                        // This is preferred over blocking the cache during the whole factory call duration
-                        self.try_add_arc2(key.clone(), a_value.clone());
+                        // There are cases where we want to return without caching the value, eg in 4xx errors.
+                        if cache {
+                            // This might fail if the key was added by another thread, but we don't care
+                            // This is preferred over blocking the cache during the whole factory call duration
+                            self.try_add_arc2(key.clone(), a_value.clone());
+                        }
                         Ok(a_value)
                     }
                     Err(e) => Err(e),
