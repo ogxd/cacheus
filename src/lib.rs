@@ -17,7 +17,7 @@ use std::time::Duration;
 use buffered_body::BufferedBody;
 pub use caches::*;
 pub use collections::*;
-pub use config::RisuConfiguration;
+pub use config::CacheusConfiguration;
 use executor::TokioExecutor;
 use futures::join;
 use gxhash::GxHasher;
@@ -27,46 +27,53 @@ use hyper::server::conn::{http1, http2};
 use hyper::service::service_fn;
 use hyper::{Request, Response};
 use hyper_util::client::legacy::connect::HttpConnector;
+use hyper_tls::HttpsConnector;
 use hyper_util::client::legacy::Client;
 use hyper_util::rt::TokioIo;
 use metrics::Metrics;
 use tokio::net::TcpListener;
 use std::sync::atomic::Ordering;
 
-pub struct RisuServer
+pub struct CacheusServer
 {
-    configuration: RisuConfiguration,
+    configuration: CacheusConfiguration,
     cache: ShardedCache<u128, Response<BufferedBody>>,
     metrics: Metrics,
-    client: Client<HttpConnector, BufferedBody>,
+    client: Client<HttpsConnector<HttpConnector>, BufferedBody>,
 }
 
-impl RisuServer
+impl CacheusServer
 {
     pub async fn start_from_config_str(config_str: &str)
     {
-        let configuration: RisuConfiguration =
-            serde_yaml::from_str::<RisuConfiguration>(config_str).expect("Could not parse configuration file");
-        RisuServer::start(configuration).await.unwrap();
+        let configuration: CacheusConfiguration =
+            serde_yaml::from_str::<CacheusConfiguration>(config_str).expect("Could not parse configuration file");
+        CacheusServer::start(configuration).await.unwrap();
     }
 
     pub async fn start_from_config_file(config_file: &str)
     {
         info!("Reading configuration from file: {}", config_file);
         let contents = std::fs::read_to_string(config_file).expect("Could not find configuration file");
-        let configuration: RisuConfiguration =
-            serde_yaml::from_str::<RisuConfiguration>(&contents).expect("Could not parse configuration file");
-        RisuServer::start(configuration).await.unwrap();
+        let configuration: CacheusConfiguration =
+            serde_yaml::from_str::<CacheusConfiguration>(&contents).expect("Could not parse configuration file");
+        CacheusServer::start(configuration).await.unwrap();
     }
 
-    pub async fn start(configuration: RisuConfiguration) -> Result<(), std::io::Error>
+    pub async fn start(configuration: CacheusConfiguration) -> Result<(), std::io::Error>
     {
-        info!("Starting Prequest server...");
+        info!("Starting Cacheus server...");
 
-        let mut connector = HttpConnector::new();
-        connector.set_nodelay(true);
-
-        let server = Arc::new(RisuServer {
+        let connector = match configuration.https {
+            true => HttpsConnector::new(),
+            false => {
+                let mut http = HttpConnector::new();
+                http.set_nodelay(true);
+                HttpsConnector::new_with_connector(http)
+            },
+        };
+        
+        let server = Arc::new(CacheusServer {
             configuration: configuration.clone(),
             cache: ShardedCache::<u128, Response<BufferedBody>>::new(
                 configuration.in_memory_shards as usize,
@@ -109,7 +116,7 @@ impl RisuServer
                         debug!("Listening for http2 connections...");
                         let server_for_metrics = server.clone();
                         if let Err(err) = http2::Builder::new(TokioExecutor)
-                            .serve_connection(io, service_fn(move |req| RisuServer::call_async(server.clone(), req)))
+                            .serve_connection(io, service_fn(move |req| CacheusServer::call_async(server.clone(), req)))
                             .await
                         {
                             server_for_metrics.metrics.connection_reset.inc();
@@ -121,7 +128,7 @@ impl RisuServer
                         debug!("Listening for http1 connections...");
                         let server_for_metrics = server.clone();
                         if let Err(err) = http1::Builder::new()
-                            .serve_connection(io, service_fn(move |req| RisuServer::call_async(server.clone(), req)))
+                            .serve_connection(io, service_fn(move |req| CacheusServer::call_async(server.clone(), req)))
                             .await
                         {
                             server_for_metrics.metrics.connection_reset.inc();
@@ -144,7 +151,7 @@ impl RisuServer
                 tokio::task::spawn(async move {
                     //let server = server.clone();
                     if let Err(err) = http1::Builder::new()
-                        .serve_connection(io, service_fn(move |req| RisuServer::prometheus(server.clone(), req)))
+                        .serve_connection(io, service_fn(move |req| CacheusServer::prometheus(server.clone(), req)))
                         .await
                     {
                         warn!("Error serving prom connection: {:?}", err);
@@ -164,7 +171,7 @@ impl RisuServer
                 tokio::task::spawn(async move {
                     //let server = server.clone();
                     if let Err(err) = http1::Builder::new()
-                        .serve_connection(io, service_fn(|req| RisuServer::healthcheck(req)))
+                        .serve_connection(io, service_fn(|req| CacheusServer::healthcheck(req)))
                         .await
                     {
                         warn!("Error serving healthcheck connection: {:?}", err);
@@ -184,14 +191,14 @@ impl RisuServer
     }
 
     pub async fn prometheus(
-        server: Arc<RisuServer>, _: Request<hyper::body::Incoming>,
+        server: Arc<CacheusServer>, _: Request<hyper::body::Incoming>,
     ) -> Result<Response<BufferedBody>, hyper::Error>
     {
         Ok(Response::new(BufferedBody::from_bytes(&server.metrics.encode())))
     }
 
     pub async fn call_async(
-        service: Arc<RisuServer>, request: Request<Incoming>,
+        service: Arc<CacheusServer>, request: Request<Incoming>,
     ) -> Result<Response<BufferedBody>, hyper::Error>
     {
         debug!("Request received");
@@ -229,14 +236,23 @@ impl RisuServer
             debug!("Cache miss");
             service.metrics.cache_misses.inc();
 
-            let target_host = request.headers().get("x-target-host").expect("Missing X-Target-Host header! Can't forward the request.").to_str().unwrap();
+            let target_host = match request.headers().get("x-target-host") {
+                Some(value) => value.to_str().unwrap().to_string(),
+                None => service.configuration.default_target_host.clone(),
+            };
 
+            if target_host.is_empty() {
+                panic!("Missing X-Target-Host header! Can't forward the request.");
+            }
+            
             let target_uri = Uri::builder()
-                .scheme("http")
-                .authority(target_host)
+                .scheme("https")
+                .authority(target_host.clone())
                 .path_and_query(request.uri().path_and_query().unwrap().clone())
                 .build()
                 .expect("Failed to build target URI");
+
+            info!("Headers send to {}", target_uri);
 
             // Copy path and query
             let mut forwarded_req = Request::builder()
@@ -246,7 +262,14 @@ impl RisuServer
 
             // Copy headers
             let headers = forwarded_req.headers_mut().expect("Failed to get headers");
+            // Add host header
             headers.extend(request.headers().iter().map(|(k, v)| (k.clone(), v.clone())));
+            headers.insert("Host", target_host.parse().unwrap());
+
+            // Log all headers
+            for (name, value) in request.headers() {
+                info!("- {}: {}", name, value.to_str().unwrap());
+            }
 
             let body = request.into_body();
 
