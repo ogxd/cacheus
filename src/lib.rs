@@ -12,7 +12,7 @@ use std::hash::Hash;
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::atomic::AtomicBool;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use buffered_body::BufferedBody;
@@ -32,6 +32,7 @@ use hyper_tls::HttpsConnector;
 use hyper_util::client::legacy::Client;
 use hyper_util::rt::TokioIo;
 use log::LevelFilter;
+use log::Level::*;
 use metrics::Metrics;
 use simplelog::{ColorChoice, CombinedLogger, Config, TermLogger, TerminalMode};
 use tokio::net::TcpListener;
@@ -216,15 +217,32 @@ impl CacheusServer
         let timestamp = std::time::Instant::now();
         service.metrics.cache_calls.inc();
 
+        let trace = Arc::new(Mutex::new(String::new()));
+
+        if log_enabled!(Debug) {
+            trace.lock().unwrap().push_str(&format!("\nReceived request to path: {:?}", request.uri()));
+        }
+
         let key_factory = |request: &Request<BufferedBody>| {
             // Hash request content
             let mut hasher = GxHasher::with_seed(123);
+
+            if log_enabled!(Debug) {
+                trace.lock().unwrap().push_str("\nHash: (");
+            }
+
             // Different path/query means different key
             if service.configuration.hash_path {
+                if log_enabled!(Debug) {
+                    trace.lock().unwrap().push_str("path + ");
+                }
                 request.uri().path().hash(&mut hasher);
             }
             if service.configuration.hash_query {
                 if let Some(query) = request.uri().query() {
+                    if log_enabled!(Debug) {
+                        trace.lock().unwrap().push_str("query + ");
+                    }
                     query.hash(&mut hasher);
                 }
             }
@@ -234,15 +252,29 @@ impl CacheusServer
             // In this case, the caller may define a hash header to not use the body for the key.
             match request.headers().get("x-request-id") {
                 // If the request has a request id header, use it as the key
-                Some(value) => value.as_bytes().hash(&mut hasher),
+                Some(value) => {
+                    if log_enabled!(Debug) {
+                        trace.lock().unwrap().push_str("x-request-id + ");
+                    }
+                    value.as_bytes().hash(&mut hasher);
+                },
                 // Otherwise hash the request body
                 None => {
                     if service.configuration.hash_body {
+                        if log_enabled!(Debug) {
+                            trace.lock().unwrap().push_str("body + ");
+                        }
                         request.body().hash(&mut hasher);
                     }
                 }
             }
-            hasher.finish_u128()
+            let hash = hasher.finish_u128();
+
+            if log_enabled!(Debug) {
+                trace.lock().unwrap().push_str(&format!("): {:x}", hash));
+            }
+
+            return hash;
         };
 
         let cached: AtomicBool = true.into();
@@ -263,14 +295,16 @@ impl CacheusServer
                 panic!("Missing X-Target-Host header! Can't forward the request.");
             }
 
-            debug!("Forwarding request to host: '{}' with path: '{}' and query '{}'", target_host,request.uri().path(), request.uri().query().unwrap_or(""));
-            
             let target_uri = Uri::builder()
                 .scheme("https")
                 .authority(target_host.clone())
                 .path_and_query(request.uri().path_and_query().unwrap().clone())
                 .build()
                 .expect("Failed to build target URI");
+
+            if log_enabled!(Debug) {
+                trace.lock().unwrap().push_str(&format!("\nCache miss! Forwarding request to: {}", target_uri));
+            }
 
             // Copy path and query
             let mut forwarded_req = Request::builder()
@@ -282,13 +316,17 @@ impl CacheusServer
             let headers = forwarded_req.headers_mut().expect("Failed to get headers");
             // Add host header
             headers.extend(request.headers().iter().map(|(k, v)| (k.clone(), v.clone())));
-            headers.insert("Host", target_host.parse().unwrap());
+            headers.insert("host", target_host.parse().unwrap());
             // Remove accept-encoding header, as we don't want to handle compressed responses
             headers.remove("accept-encoding");
 
-            // Log all headers in a single log entry
-            let headers_log: Vec<String> = request.headers().iter().map(|(name, value)| format!("{}: {}", name, value.to_str().unwrap())).collect();
-            debug!("Request headers: \n{}", headers_log.join("\n"));
+            if log_enabled!(Debug) {
+                let mut trace = trace.lock().unwrap();
+                trace.push_str("\nForwarded headers:");
+                for (k, v) in headers.iter() {
+                    trace.push_str(&format!("\n - {}: {}", k, v.to_str().unwrap()));
+                }
+            }
 
             let body = request.into_body();
 
@@ -312,9 +350,7 @@ impl CacheusServer
 
             // Replace strings in response, but only if content type is utf8 text
             if let Some(content_type) = parts.headers.get("content-type") {
-                debug!("Content type: {:?}", content_type);
                 if content_type.to_str().unwrap().contains("json") {
-                    debug!("Replacing strings in response...");
                     let content_length = buffered_response_body.replace_strings(&service.configuration.response_replacement_strings);
                     // Response length may have changed, so we need to update the content-length header
                     parts.headers.insert("content-length", content_length.to_string().parse().unwrap());
@@ -322,7 +358,14 @@ impl CacheusServer
             }
 
             let status = parts.status;
-            debug!("Received response from target with status: {:?}", status);
+            
+            if log_enabled!(Debug) {
+                let mut trace = trace.lock().unwrap();
+                trace.push_str(&format!("\nReceived response status {} and headers:", status));
+                for (k, v) in parts.headers.iter() {
+                    trace.push_str(&format!("\n - {}: {}", k, v.to_str().unwrap()));
+                }
+            }
 
             Ok((Response::from_parts(parts, buffered_response_body), status.is_informational() || status.is_success() || status.is_redirection() /* only cache if status is successful */))
         };
@@ -347,8 +390,15 @@ impl CacheusServer
         };
 
         let elapsed = timestamp.elapsed();
-        let cached_str = if cached.load(Ordering::Relaxed) { &["true"] } else { &["false"] };
-        service.metrics.request_duration.with_label_values(cached_str).observe(elapsed.as_secs_f64());
+        let cached_str = if cached.load(Ordering::Relaxed) { "true" } else { "false" };
+        service.metrics.request_duration.with_label_values(&[cached_str]).observe(elapsed.as_secs_f64());
+
+        // Log trace
+        if log_enabled!(Debug) {
+            let mut trace = trace.lock().unwrap();
+            trace.push_str(format!("\nWas cached: {}", cached_str).as_str());
+            debug!("Debug trace: {}", trace);
+        }
 
         response
     }
