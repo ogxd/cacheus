@@ -44,6 +44,9 @@ pub struct CacheusConfiguration
     #[serde(default = "default_exclude_path_containing")]
     pub exclude_path_containing: Vec<String>,
 
+    #[serde(default = "default_bypass_path_containing")]
+    pub bypass_path_containing: Vec<String>,
+
     #[serde(default = "default_minimum_log_level")]
     pub minimum_log_level: String,
 
@@ -107,6 +110,10 @@ fn default_response_replacement_strings() -> HashMap<String, String>
     HashMap::new()
 }
 fn default_exclude_path_containing() -> Vec<String>
+{
+    Vec::new()
+}
+fn default_bypass_path_containing() -> Vec<String>
 {
     Vec::new()
 }

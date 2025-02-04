@@ -317,6 +317,17 @@ impl CacheusServer
                 .build()
                 .expect("Failed to build target URI");
 
+            let mut should_bypass = false; 
+            if service.configuration.bypass_path_containing.len() > 0 {
+                let lowercase_path = request.uri().path().to_lowercase();
+                for path in &service.configuration.bypass_path_containing {
+                    if lowercase_path.contains(path) {
+                        should_bypass = true;
+                        break;
+                    }
+                }
+            } 
+
             if log_enabled!(Debug) {
                 trace.lock().unwrap().push_str(&format!("\nCache miss! Forwarding request to: {}", target_uri));
             }
@@ -382,7 +393,12 @@ impl CacheusServer
                 }
             }
 
-            Ok((Response::from_parts(parts, buffered_response_body), status.is_informational() || status.is_success() || status.is_redirection() /* only cache if status is successful */))
+            let cache_response: bool = match status.as_u16() {
+                200..=299 => !should_bypass,
+                _ => false,
+            };
+
+            Ok((Response::from_parts(parts, buffered_response_body), cache_response))
         };
 
         let (parts, body) = request.into_parts();

@@ -9,3 +9,5 @@ response_replacement_strings:
   "nuget": "pouetsuperlongsupersuperlongpouet"
 exclude_path_containing:
   - "newtonsoft."
+bypass_path_containing:
+  - "/index.json"
