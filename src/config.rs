@@ -41,6 +41,9 @@ pub struct CacheusConfiguration
     #[serde(default = "default_response_replacement_strings")]
     pub response_replacement_strings: HashMap<String, String>,
 
+    #[serde(default = "default_exclude_path_containing")]
+    pub exclude_path_containing: Vec<String>,
+
     #[serde(default = "default_minimum_log_level")]
     pub minimum_log_level: String,
 
@@ -102,6 +105,10 @@ fn default_max_idle_connections_per_host() -> u16
 fn default_response_replacement_strings() -> HashMap<String, String>
 {
     HashMap::new()
+}
+fn default_exclude_path_containing() -> Vec<String>
+{
+    Vec::new()
 }
 fn default_minimum_log_level() -> String
 {

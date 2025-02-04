@@ -224,6 +224,16 @@ impl CacheusServer
             trace.lock().unwrap().push_str(&format!("\nReceived request to path: {:?}", request.uri()));
         }
 
+        // If path contains any of service.configuration.exclude_path_containing, return 404
+        if service.configuration.exclude_path_containing.len() > 0 {
+            let lowercase_path = request.uri().path().to_lowercase();
+            for path in &service.configuration.exclude_path_containing {
+                if lowercase_path.contains(path) {
+                    return Ok(Response::builder().status(404).body(BufferedBody::from_bytes(b"")).unwrap());
+                }
+            }
+        }
+
         let key_factory = |request: &Request<BufferedBody>| {
             // Hash request content
             let mut hasher = GxHasher::with_seed(123);
