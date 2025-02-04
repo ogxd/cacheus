@@ -88,6 +88,7 @@ impl CacheusServer
             configuration: configuration.clone(),
             cache: ShardedCache::<u128, Response<BufferedBody>>::new(
                 configuration.in_memory_shards as usize,
+                configuration.cache_probatory_size,
                 configuration.cache_resident_size,
                 Duration::from_secs(configuration.cache_ttl_seconds as u64),
                 lru::ExpirationType::Absolute,
@@ -271,6 +272,10 @@ impl CacheusServer
             let hash = hasher.finish_u128();
 
             if log_enabled!(Debug) {
+                // Remove last 3
+                trace.lock().unwrap().pop();
+                trace.lock().unwrap().pop();
+                trace.lock().unwrap().pop();
                 trace.lock().unwrap().push_str(&format!("): {:x}", hash));
             }
 

@@ -6,7 +6,7 @@ use crate::{Cache, LruCache};
 #[allow(dead_code)]
 pub struct ProbatoryCache<K, V>
 {
-    probatory: LruCache<K, ()>,
+    probatory: Option<LruCache<K, ()>>,
     resident: LruCache<K, V>,
 }
 
@@ -14,18 +14,18 @@ impl<K, V> Cache<K, V> for ProbatoryCache<K, V>
 where
     K: Eq + std::hash::Hash + Clone,
 {
-    fn try_add_arc(&mut self, key: K, value: Arc<V>) -> bool
-    {
-        match self.probatory.try_add(key.clone(), ()) {
-            // New key in the probatory cache
-            true => true,
-            false => match self.resident.try_add_arc(key.clone(), value) {
-                // Key was already in the probatory cache, but just entered the resident cache
-                true => true,
-                // Already in the resident cache
-                false => false,
-            },
+    fn try_add_arc(&mut self, key: K, value: Arc<V>) -> bool {
+        // Try to add to probatory cache first (if it exists)
+        let is_new_to_probatory = self.probatory
+            .as_mut()
+            .map_or(false, |probatory| probatory.try_add(key.clone(), ()));
+
+        if is_new_to_probatory {
+            return true;
         }
+
+        // If not new to probatory or probatory doesn't exist, try resident cache
+        self.resident.try_add_arc(key, value)
     }
 
     fn try_get(&mut self, key: &K) -> Option<Arc<V>>
@@ -39,11 +39,11 @@ impl<K, V> ProbatoryCache<K, V>
 where
     K: Eq + std::hash::Hash + Clone,
 {
-    pub fn new(max_size: usize, expiration: Duration, expiration_type: ExpirationType) -> Self
+    pub fn new(probatory_size: usize, resident_size: usize, expiration: Duration, expiration_type: ExpirationType) -> Self
     {
         Self {
-            probatory: LruCache::new(10 * max_size, expiration, ExpirationType::Sliding),
-            resident: LruCache::new(max_size, expiration, expiration_type),
+            probatory: if probatory_size > 0 { Some(LruCache::new(probatory_size, expiration, ExpirationType::Sliding)) } else { None },
+            resident: LruCache::new(resident_size, expiration, expiration_type),
         }
     }
 }
@@ -56,7 +56,7 @@ mod tests
     #[test]
     fn basic()
     {
-        let mut lru = ProbatoryCache::new(4, Duration::MAX, ExpirationType::Absolute);
+        let mut lru = ProbatoryCache::new(40, 4, Duration::MAX, ExpirationType::Absolute);
         assert!(lru.try_get(&1).is_none());
         assert!(lru.try_add(1, "hello"));
         assert!(lru.try_get(&1).is_none(), "Key should only be in the probatory cache");
@@ -68,7 +68,7 @@ mod tests
     #[test]
     fn trimming()
     {
-        let mut lru = ProbatoryCache::new(4, Duration::MAX, ExpirationType::Absolute);
+        let mut lru = ProbatoryCache::new(40, 4, Duration::MAX, ExpirationType::Absolute);
         // Add every entry twice for them to enter the resident cache
         assert!(lru.try_add(1, "h"));
         assert!(lru.try_add(1, "h"));
