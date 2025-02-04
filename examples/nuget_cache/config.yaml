@@ -1,5 +1,7 @@
 minimum_log_level: debug
 default_target_host: "www.nuget.org"
+cache_probatory_size: 0
+cache_resident_size: 10000
 listening_port: 4002
 prometheus_port: 4004
 https: true
@@ -8,6 +10,6 @@ hash_body: false
 response_replacement_strings:
   "nuget": "pouetsuperlongsupersuperlongpouet"
 exclude_path_containing:
-  - "newtonsoft."
+  - "test."
 bypass_path_containing:
   - "/index.json"

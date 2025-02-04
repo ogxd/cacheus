@@ -14,6 +14,11 @@ impl<K, V> Cache<K, V> for ProbatoryCache<K, V>
 where
     K: Eq + std::hash::Hash + Clone,
 {
+    fn len(&self) -> usize
+    {
+        self.resident.len()
+    }
+
     fn try_add_arc(&mut self, key: K, value: Arc<V>) -> bool {
         // Try to add to probatory cache first (if it exists)
         let is_new_to_probatory = self.probatory

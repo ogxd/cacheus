@@ -16,6 +16,11 @@ impl<K, V> Cache<K, V> for ShardedCache<K, V>
 where
     K: Eq + std::hash::Hash + Clone,
 {
+    fn len(&self) -> usize
+    {
+        self.shards.iter().map(|shard| shard.lock().unwrap().len()).sum()
+    }
+
     fn try_add_arc(&mut self, key: K, value: Arc<V>) -> bool
     {
         self.get_shard(&key).lock().unwrap().try_add_arc(key, value)

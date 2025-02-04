@@ -33,6 +33,11 @@ impl<K, V> Cache<K, V> for LruCache<K, V>
 where
     K: Eq + std::hash::Hash + Clone,
 {
+    fn len(&self) -> usize
+    {
+        self.map.len()
+    }
+
     fn try_add_arc(&mut self, key: K, value: Arc<V>) -> bool
     {
         let mut added = false;

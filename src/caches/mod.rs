@@ -12,6 +12,8 @@ pub use sharded::ShardedCache;
 #[allow(async_fn_in_trait)]
 pub trait Cache<K, V>
 {
+    fn len(&self) -> usize;
+
     fn try_add(&mut self, key: K, value: V) -> bool
     {
         self.try_add_arc(key, Arc::new(value))

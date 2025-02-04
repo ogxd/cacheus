@@ -1,15 +1,11 @@
-use prometheus::{Counter, Encoder, HistogramVec, HistogramOpts, Opts, Registry, TextEncoder};
+use prometheus::{Counter, CounterVec, Encoder, Gauge, HistogramOpts, HistogramVec, Opts, Registry, TextEncoder};
 
 pub struct Metrics
 {
     pub request_duration: HistogramVec,
-    pub cache_calls: Counter,
-    // cache_hits: Counter,
-    pub cache_misses: Counter,
+    pub requests: CounterVec,
     pub connection_reset: Counter,
-    // cache_evictions: Counter,
-    // cache_resident_size: Counter,
-    // cache_probatory_size: Counter,
+    pub cache_entries: Gauge,
     registry: Registry,
 }
 
@@ -19,7 +15,7 @@ impl Metrics
     {
         let metrics = Metrics {
             request_duration: HistogramVec::new(
-                HistogramOpts::new("cacheus:request_duration", "Request duration (s)").buckets(vec![
+                HistogramOpts::new("cacheus:request_duration_seconds", "Request duration (s)").buckets(vec![
                     0.00001, /* 10μs */
                     0.00002, 0.00005, 0.0001, /* 100μs */
                     0.0002, 0.0005, 0.001, /* 1ms */
@@ -27,11 +23,11 @@ impl Metrics
                     0.02, 0.05, 0.1, /* 100ms */
                     0.2, 0.5, 1., /* 1s */
                     2., 5., 10., /* 10s */
-                ]), &["cached"]
+                ]), &["status"]
             )
             .unwrap(),
-            cache_calls: Counter::with_opts(Opts::new("cacheus:calls_total", "Number of cache calls")).unwrap(),
-            cache_misses: Counter::with_opts(Opts::new("cacheus:misses_total", "Number of cache misses")).unwrap(),
+            requests: CounterVec::new(Opts::new("cacheus:requests_total", "Number of cache calls"), &["status"]).unwrap(),
+            cache_entries: Gauge::with_opts(Opts::new("cacheus:cache_entries_count", "Number of entries in the resident cache")).unwrap(),
             connection_reset: Counter::with_opts(Opts::new("cacheus:connection_reset_total", "Number of connection reset (RST)"))
                 .unwrap(),
             registry: Registry::new(),
@@ -42,11 +38,11 @@ impl Metrics
             .unwrap();
         metrics
             .registry
-            .register(Box::new(metrics.cache_calls.clone()))
+            .register(Box::new(metrics.requests.clone()))
             .unwrap();
         metrics
             .registry
-            .register(Box::new(metrics.cache_misses.clone()))
+            .register(Box::new(metrics.cache_entries.clone()))
             .unwrap();
         metrics
             .registry

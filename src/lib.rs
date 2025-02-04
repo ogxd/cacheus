@@ -7,6 +7,7 @@ mod collections;
 pub mod config;
 mod executor;
 mod metrics;
+mod status;
 
 use std::hash::Hash;
 use std::net::SocketAddr;
@@ -35,6 +36,7 @@ use log::LevelFilter;
 use log::Level::*;
 use metrics::Metrics;
 use simplelog::{ColorChoice, CombinedLogger, Config, TermLogger, TerminalMode};
+use status::Status;
 use tokio::net::TcpListener;
 use std::sync::atomic::Ordering;
 
@@ -216,8 +218,22 @@ impl CacheusServer
         trace!("Request received");
 
         let timestamp = std::time::Instant::now();
-        service.metrics.cache_calls.inc();
 
+        let (response, status) = CacheusServer::call_internal_async(service.clone(), request).await;
+
+        let elapsed = timestamp.elapsed();
+        let status_str = status.to_string();
+        service.metrics.request_duration.with_label_values(&[&status_str]).observe(elapsed.as_secs_f64());
+        service.metrics.requests.with_label_values(&[&status_str]).inc();
+        service.metrics.cache_entries.set(service.cache.len() as f64);
+
+        response
+    }
+
+    pub async fn call_internal_async(
+        service: Arc<CacheusServer>, request: Request<Incoming>,
+    ) -> (Result<Response<BufferedBody>, hyper::Error>, Status)
+    {
         let trace = Arc::new(Mutex::new(String::new()));
 
         if log_enabled!(Debug) {
@@ -229,7 +245,7 @@ impl CacheusServer
             let lowercase_path = request.uri().path().to_lowercase();
             for path in &service.configuration.exclude_path_containing {
                 if lowercase_path.contains(path) {
-                    return Ok(Response::builder().status(404).body(BufferedBody::from_bytes(b"")).unwrap());
+                    return (Ok(Response::builder().status(404).body(BufferedBody::from_bytes(b"")).unwrap()), Status::Reject);
                 }
             }
         }
@@ -292,14 +308,13 @@ impl CacheusServer
             return hash;
         };
 
-        let cached: AtomicBool = true.into();
+        let status: Arc<tokio::sync::Mutex<Status>> = Arc::new(tokio::sync::Mutex::new(Status::Hit));
 
         let value_factory = |request: Request<BufferedBody>| async {
 
-            cached.store(false, Ordering::Relaxed);
-
             trace!("Cache miss");
-            service.metrics.cache_misses.inc();
+            let mut status = status.lock().await;
+            *status = Status::Miss;
 
             let target_host = match request.headers().get("x-target-host") {
                 Some(value) => value.to_str().unwrap().to_string(),
@@ -322,6 +337,7 @@ impl CacheusServer
                 let lowercase_path = request.uri().path().to_lowercase();
                 for path in &service.configuration.bypass_path_containing {
                     if lowercase_path.contains(path) {
+                        *status = Status::Bypass;
                         should_bypass = true;
                         break;
                     }
@@ -394,7 +410,7 @@ impl CacheusServer
             }
 
             let cache_response: bool = match status.as_u16() {
-                200..=299 => !should_bypass,
+                100..=399 => !should_bypass,
                 _ => false,
             };
 
@@ -410,27 +426,23 @@ impl CacheusServer
             .get_or_add_from_item2(request, key_factory, value_factory)
             .await;
 
-        let response = match result {
-            Ok(response) => {
-                let response = response.as_ref();
-                let response: Response<BufferedBody> = response.clone();
-                trace!("Received response from target with status: {:?}", response);
-                Ok(response)
-            }
-            Err(e) => Err(e),
-        };
-
-        let elapsed = timestamp.elapsed();
-        let cached_str = if cached.load(Ordering::Relaxed) { "true" } else { "false" };
-        service.metrics.request_duration.with_label_values(&[cached_str]).observe(elapsed.as_secs_f64());
+        let status: Status = status.lock().await.clone();
 
         // Log trace
         if log_enabled!(Debug) {
             let mut trace = trace.lock().unwrap();
-            trace.push_str(format!("\nWas cached: {}", cached_str).as_str());
+            trace.push_str(format!("\nStatus: {}", status).as_str());
             debug!("Debug trace: {}", trace);
         }
 
-        response
+        match result {
+            Ok(response) => {
+                let response = response.as_ref();
+                let response: Response<BufferedBody> = response.clone();
+                trace!("Received response from target with status: {:?}", response);
+                (Ok(response), status)
+            }
+            Err(e) => (Err(e), status),
+        }
     }
 }
