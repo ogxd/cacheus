@@ -47,6 +47,9 @@ pub struct CacheusConfiguration
     #[serde(default = "default_bypass_path_containing")]
     pub bypass_path_containing: Vec<String>,
 
+    #[serde(default = "default_unauthorized_when_header_missing")]
+    pub unauthorized_when_header_missing: Vec<String>,
+
     #[serde(default = "default_minimum_log_level")]
     pub minimum_log_level: String,
 
@@ -114,6 +117,10 @@ fn default_exclude_path_containing() -> Vec<String>
     Vec::new()
 }
 fn default_bypass_path_containing() -> Vec<String>
+{
+    Vec::new()
+}
+fn default_unauthorized_when_header_missing() -> Vec<String>
 {
     Vec::new()
 }

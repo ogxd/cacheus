@@ -12,14 +12,13 @@ mod status;
 use std::hash::Hash;
 use std::net::SocketAddr;
 use std::str::FromStr;
-use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use buffered_body::BufferedBody;
 pub use caches::*;
 pub use collections::*;
 pub use config::CacheusConfiguration;
+use buffered_body::BufferedBody;
 use executor::TokioExecutor;
 use futures::join;
 use gxhash::GxHasher;
@@ -252,6 +251,15 @@ impl CacheusServer
             for path in &service.configuration.exclude_path_containing {
                 if lowercase_path.contains(path) {
                     return (Ok(Response::builder().status(404).body(BufferedBody::from_bytes(b"")).unwrap()), Status::Reject);
+                }
+            }
+        }
+
+        // If any of the headers in service.configuration.unauthorized_when_header_missing are missing, return 401
+        if service.configuration.unauthorized_when_header_missing.len() > 0 {
+            for header in &service.configuration.unauthorized_when_header_missing {
+                if request.headers().get(header).is_none() {
+                    return (Ok(Response::builder().status(401).body(BufferedBody::from_bytes(b"")).unwrap()), Status::Reject);
                 }
             }
         }
