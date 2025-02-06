@@ -270,7 +270,9 @@ impl CacheusServer
             if lowercase_path.contains("packages/nuget/metadata") || lowercase_path.contains("packages/nuget/download") {
                 for header in &service.configuration.unauthorized_when_header_missing {
                     if request.headers().get(header).is_none() {
-                        return (Ok(Response::builder().status(401).body(BufferedBody::from_bytes(b"")).unwrap()), Status::Reject);
+                        let mut response = Response::builder().status(401).body(BufferedBody::from_bytes(b"")).unwrap();
+                        response.headers_mut().insert("www-authenticate", "Basic realm=\"GitLab Packages Registry\"".parse().unwrap());
+                        return (Ok(response), Status::Reject);
                     }
                 }
             }
