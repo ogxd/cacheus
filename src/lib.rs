@@ -38,7 +38,6 @@ use metrics::Metrics;
 use simplelog::{ColorChoice, CombinedLogger, Config, TermLogger, TerminalMode};
 use status::Status;
 use tokio::net::TcpListener;
-use std::sync::atomic::Ordering;
 
 pub struct CacheusServer
 {
@@ -224,10 +223,17 @@ impl CacheusServer
         let elapsed = timestamp.elapsed();
         let status_str = status.to_string();
         service.metrics.request_duration.with_label_values(&[&status_str]).observe(elapsed.as_secs_f64());
-        service.metrics.requests.with_label_values(&[&status_str]).inc();
         service.metrics.cache_entries.set(service.cache.len() as f64);
-
-        response
+        match response {
+            Ok(ok) => {
+                service.metrics.requests.with_label_values(&[&status_str, ok.status().as_str()]).inc();
+                Ok(ok)
+            }
+            Err(e) => {
+                service.metrics.requests.with_label_values(&[&status_str, "error"]).inc();
+                Err(e)
+            }
+        }
     }
 
     pub async fn call_internal_async(
@@ -253,6 +259,7 @@ impl CacheusServer
         let key_factory = |request: &Request<BufferedBody>| {
             // Hash request content
             let mut hasher = GxHasher::with_seed(123);
+            let mut log_hashed_obj = Vec::new();
 
             if log_enabled!(Debug) {
                 trace.lock().unwrap().push_str("\nHash: (");
@@ -261,14 +268,14 @@ impl CacheusServer
             // Different path/query means different key
             if service.configuration.hash_path {
                 if log_enabled!(Debug) {
-                    trace.lock().unwrap().push_str("path + ");
+                    log_hashed_obj.push("path");
                 }
                 request.uri().path().hash(&mut hasher);
             }
             if service.configuration.hash_query {
                 if let Some(query) = request.uri().query() {
                     if log_enabled!(Debug) {
-                        trace.lock().unwrap().push_str("query + ");
+                        log_hashed_obj.push("query");
                     }
                     query.hash(&mut hasher);
                 }
@@ -289,7 +296,7 @@ impl CacheusServer
                 None => {
                     if service.configuration.hash_body {
                         if log_enabled!(Debug) {
-                            trace.lock().unwrap().push_str("body + ");
+                            log_hashed_obj.push("body");
                         }
                         request.body().hash(&mut hasher);
                     }
@@ -298,11 +305,7 @@ impl CacheusServer
             let hash = hasher.finish_u128();
 
             if log_enabled!(Debug) {
-                // Remove last 3
-                trace.lock().unwrap().pop();
-                trace.lock().unwrap().pop();
-                trace.lock().unwrap().pop();
-                trace.lock().unwrap().push_str(&format!("): {:x}", hash));
+                trace.lock().unwrap().push_str(&format!("{}): {:x}", log_hashed_obj.join(" + "), hash));
             }
 
             return hash;

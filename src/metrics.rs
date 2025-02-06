@@ -26,7 +26,7 @@ impl Metrics
                 ]), &["status"]
             )
             .unwrap(),
-            requests: CounterVec::new(Opts::new("cacheus:requests_total", "Number of cache calls"), &["status"]).unwrap(),
+            requests: CounterVec::new(Opts::new("cacheus:requests_total", "Number of cache calls"), &["status", "http_code"]).unwrap(),
             cache_entries: Gauge::with_opts(Opts::new("cacheus:cache_entries_count", "Number of entries in the resident cache")).unwrap(),
             connection_reset: Counter::with_opts(Opts::new("cacheus:connection_reset_total", "Number of connection reset (RST)"))
                 .unwrap(),
