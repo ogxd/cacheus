@@ -17,6 +17,9 @@ pub struct CacheusConfiguration
     #[serde(default = "default_cache_ttl_seconds")]
     pub cache_ttl_seconds: usize,
 
+    #[serde(default = "default_short_cache_ttl_seconds")]
+    pub short_cache_ttl_seconds: usize,
+
     #[serde(default = "default_default_target_host")]
     pub default_target_host: String,
 
@@ -79,6 +82,10 @@ fn default_cache_probatory_size() -> usize
 fn default_cache_ttl_seconds() -> usize
 {
     600
+}
+fn default_short_cache_ttl_seconds() -> usize
+{
+    10
 }
 fn default_default_target_host() -> String
 {

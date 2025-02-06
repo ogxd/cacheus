@@ -42,6 +42,7 @@ pub struct CacheusServer
 {
     configuration: CacheusConfiguration,
     cache: ShardedCache<u128, Response<BufferedBody>>,
+    short_cache: ShardedCache<u128, Response<BufferedBody>>,
     metrics: Metrics,
     client: Client<HttpsConnector<HttpConnector>, BufferedBody>,
 }
@@ -91,6 +92,13 @@ impl CacheusServer
                 configuration.cache_probatory_size,
                 configuration.cache_resident_size,
                 Duration::from_secs(configuration.cache_ttl_seconds as u64),
+                lru::ExpirationType::Absolute,
+            ),
+            short_cache: ShardedCache::<u128, Response<BufferedBody>>::new(
+                configuration.in_memory_shards as usize,
+                0,
+                1000,
+                Duration::from_secs(configuration.short_cache_ttl_seconds as u64),
                 lru::ExpirationType::Absolute,
             ),
             metrics: Metrics::new(),
@@ -343,18 +351,6 @@ impl CacheusServer
                 .build()
                 .expect("Failed to build target URI");
 
-            let mut should_bypass = false; 
-            if service.configuration.bypass_path_containing.len() > 0 {
-                let lowercase_path = request.uri().path().to_lowercase();
-                for path in &service.configuration.bypass_path_containing {
-                    if lowercase_path.contains(path) {
-                        *status = Status::Bypass;
-                        should_bypass = true;
-                        break;
-                    }
-                }
-            } 
-
             if log_enabled!(Debug) {
                 trace.lock().unwrap().push_str(&format!("\nCache miss! Forwarding request to: {}", target_uri));
             }
@@ -421,7 +417,7 @@ impl CacheusServer
             }
 
             let cache_response: bool = match status.as_u16() {
-                100..=399 => !should_bypass,
+                100..=399 => true,
                 _ => false,
             };
 
@@ -432,8 +428,25 @@ impl CacheusServer
         let buffered_body = BufferedBody::collect_buffered(body).await.unwrap();
         let request = Request::from_parts(parts, buffered_body);
 
-        let result: Result<Arc<Response<BufferedBody>>, hyper::Error> = service
-            .cache
+        let cache = {
+            if service.configuration.bypass_path_containing.len() > 0 {
+                let lowercase_path = request.uri().path().to_lowercase();
+                if service.configuration.bypass_path_containing
+                    .iter()
+                    .any(|path| lowercase_path.contains(path))
+                {
+                    let mut status = status.lock().await;
+                    *status = Status::HitShort;
+                    &service.short_cache
+                } else {
+                    &service.cache
+                }
+            } else {
+                &service.cache
+            }
+        };
+
+        let result: Result<Arc<Response<BufferedBody>>, hyper::Error> = cache
             .get_or_add_from_item2(request, key_factory, value_factory)
             .await;
 
