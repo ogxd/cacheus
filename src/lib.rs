@@ -265,9 +265,13 @@ impl CacheusServer
 
         // If any of the headers in service.configuration.unauthorized_when_header_missing are missing, return 401
         if service.configuration.unauthorized_when_header_missing.len() > 0 {
-            for header in &service.configuration.unauthorized_when_header_missing {
-                if request.headers().get(header).is_none() {
-                    return (Ok(Response::builder().status(401).body(BufferedBody::from_bytes(b"")).unwrap()), Status::Reject);
+            let lowercase_path = request.uri().path().to_lowercase();
+            // Hack for nuget caching purpose, need to be made generic via rules system
+            if lowercase_path.contains("packages/nuget/metadata") || lowercase_path.contains("packages/nuget/download") {
+                for header in &service.configuration.unauthorized_when_header_missing {
+                    if request.headers().get(header).is_none() {
+                        return (Ok(Response::builder().status(401).body(BufferedBody::from_bytes(b"")).unwrap()), Status::Reject);
+                    }
                 }
             }
         }

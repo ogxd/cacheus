@@ -9,6 +9,8 @@ http2: false
 hash_body: false
 response_replacement_strings:
   "nuget": "pouetsuperlongsupersuperlongpouet"
+unauthorized_when_header_missing:
+  - "authorization"
 exclude_path_containing:
   - "test."
 bypass_path_containing:
