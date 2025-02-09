@@ -5,6 +5,7 @@ mod buffered_body;
 mod caches;
 mod collections;
 pub mod config;
+pub mod config2;
 mod executor;
 mod metrics;
 mod status;

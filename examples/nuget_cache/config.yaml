@@ -1,17 +1,70 @@
-minimum_log_level: debug
-default_target_host: "www.nuget.org"
-cache_probatory_size: 0
-cache_resident_size: 10000
+# Global settings
 listening_port: 4002
 prometheus_port: 4004
 https: true
 http2: false
-hash_body: false
-response_replacement_strings:
-  "nuget": "pouetsuperlongsupersuperlongpouet"
-unauthorized_when_header_missing:
-  - "authorization"
-exclude_path_containing:
-  - "test."
-bypass_path_containing:
-  - "/index.json"
+minimum_log_level: debug
+default_target_host: "www.nuget.org"
+
+# Cache definitions
+caches:
+  - in_memory:
+      name: "packages"
+      probatory_size: 0
+      resident_size: 1000
+      cache_ttl_seconds: 86400
+      hash_body: false
+  - in_memory:
+      name: "metadata"
+      probatory_size: 0
+      resident_size: 1000
+      cache_ttl_seconds: 90
+      hash_body: false
+
+# Rules definitions
+rules:
+  - name: "Reject unauthorized requests"
+    conditions:
+      - header_exists: "authorization"
+    actions:
+      - block:
+          status_code: 401
+      - add:
+          headers:
+            - name: "WWW-Authenticate"
+              value: "Basic realm=\"GitLab Packages Registry\""
+  - name: "Reject requests for public packages"
+    conditions: # Is it OR or AND?
+      - any:
+        - path_contains: "*metadata/microsoft.*"
+        - path_contains: "*metadata/system.*"
+        - path_contains: "*metadata/grpc.*"
+        - path_contains: "*metadata/xunit.*"
+    actions:
+      - block:
+          status_code: 404
+  - name: "Replace nuget endpoints"
+    conditions:
+      - path_contains: "*/index.json"
+    actions:
+      - body_replace:
+          find: "https://gitlab.com"
+          replacement: "http://nuget-cache.prod-euw1.euw1.eqtv.io"
+  - name: "Cache metadata"
+    conditions:
+      - all:
+        - path_contains: "*/packages/nuget/metadata/*"
+        - status_code:
+            value: 200
+    actions:
+      - cache:
+          cache_name: "metadata"
+  - name: "Cache packages"
+    conditions:
+      - all:
+        - path_contains: "*/packages/nuget/download/*"
+        - status_code:
+            value: 200
+    actions:
+      - cache:
+          cache_name: "packages"
