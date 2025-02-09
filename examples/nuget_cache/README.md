@@ -1,6 +1,3 @@
-# QPS Benchmarks
+# Nuget caching with cacheus
 
-```shell
-./cacheus > cargo bench --bench simple_server
-./cacheus > curl http://127.0.0.1:3001
-```
+Cacheus can be configured as a read-through cache for Nuget packages. This examples shows a basic configuration for achieving this. More information can be found in this article: [https://ogxd.github.io/articles/nuget-caching/](https://ogxd.github.io/articles/nuget-caching/).
