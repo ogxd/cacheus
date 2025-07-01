@@ -1,4 +1,4 @@
-use cacheus::{self, config2::Configuration};
+use cacheus::{self, config::Configuration};
 
 #[tokio::main]
 async fn main()

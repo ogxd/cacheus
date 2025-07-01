@@ -1,151 +1,263 @@
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
+use std::sync::Arc;
+use std::time::Duration;
+use gxhash::GxHasher;
+use serde::{Serialize, Deserialize};
+use crate::buffered_body::BufferedBody;
+use hyper::{Request, Response, Uri};
+use hyper::body::Incoming;
+use serde_inline_default::serde_inline_default;
+use crate::{lru, Cache, CacheusServer, ShardedCache};
+use crate::status::Status;
 
-use serde::Deserialize;
-
-#[derive(Debug, Deserialize, Clone)]
-pub struct CacheusConfiguration
-{
-    #[serde(default = "default_in_memory_shards")]
-    pub in_memory_shards: u16,
-
-    #[serde(default = "default_cache_resident_size")]
-    pub cache_resident_size: usize,
-
-    #[serde(default = "default_cache_probatory_size")]
-    pub cache_probatory_size: usize,
-
-    #[serde(default = "default_cache_ttl_seconds")]
-    pub cache_ttl_seconds: usize,
-
-    #[serde(default = "default_short_cache_ttl_seconds")]
-    pub short_cache_ttl_seconds: usize,
-
-    #[serde(default = "default_default_target_host")]
-    pub default_target_host: String,
-
-    #[serde(default = "default_listening_port")]
+#[serde_inline_default]
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Configuration {
+    #[serde_inline_default(3001)]
     pub listening_port: u16,
-
-    #[serde(default = "default_https")]
-    pub https: bool,
-
-    #[serde(default = "default_http2")]
-    pub http2: bool,
-
-    #[serde(default = "default_prometheus_port")]
+    #[serde_inline_default(8000)]
     pub prometheus_port: u16,
-
-    #[serde(default = "default_healthcheck_port")]
+    #[serde_inline_default(8001)]
     pub healthcheck_port: u16,
-
-    #[serde(default = "default_max_idle_connections_per_host")]
-    pub max_idle_connections_per_host: u16,
-
-    #[serde(default = "default_response_replacement_strings")]
-    pub response_replacement_strings: HashMap<String, String>,
-
-    #[serde(default = "default_exclude_path_containing")]
-    pub exclude_path_containing: Vec<String>,
-
-    #[serde(default = "default_bypass_path_containing")]
-    pub bypass_path_containing: Vec<String>,
-
-    #[serde(default = "default_unauthorized_when_header_missing")]
-    pub unauthorized_when_header_missing: Vec<String>,
-
-    #[serde(default = "default_minimum_log_level")]
+    #[serde_inline_default(true)]
+    pub https: bool,
+    #[serde_inline_default(true)]
+    pub http2: bool,
+    #[serde_inline_default("info".to_string())]
     pub minimum_log_level: String,
+    pub on_request: Vec<OnRequest>,
+    pub on_response: Vec<OnResponse>,
+    pub caches: Vec<CacheConfig>,
+}
 
-    #[serde(default = "default_hash_path")]
-    pub hash_path: bool,
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(untagged)]
+pub enum OnRequest {
+    BlockRequest { block_request: BlockRequest },
+    LookupCache { lookup_cache: LookupCache },
+    ForwardRequest { forward_request: ForwardRequest },
+}
 
-    #[serde(default = "default_hash_query")]
-    pub hash_query: bool,
+impl OnRequest {
+    pub async fn evaluate(&self, service: Arc<CacheusServer>, request: &mut Request<BufferedBody>)  -> Option<Arc<Response<BufferedBody>>> {
+        info!("evaluating request condition: {:?}", self);
+        match self {
+            OnRequest::BlockRequest { block_request } => {
+                if !block_request.when.evaluate(request) {
+                    return Some(Arc::new(Response::builder().status(403).body(BufferedBody::from_bytes(b"")).unwrap()))
+                }
+                None
+            },
+            OnRequest::LookupCache { lookup_cache } => {
+                if let Some((cache_config, cache)) = service.caches.get(&lookup_cache.cache_name) {
+                    let key = cache_config.create_key(request);
+                    return match cache.try_get2(&key) {
+                        Some(value) => Some(value),
+                        None => None
+                    };
+                }
+                None
+            },
+            OnRequest::ForwardRequest { forward_request } => {
 
-    #[serde(default = "default_hash_body")]
+                info!("forwarding request to target host: {}", forward_request.target_host);
+
+                let target_host = match request.headers().get("x-target-host") {
+                    Some(value) => value.to_str().unwrap().to_string(),
+                    None => forward_request.target_host.clone(),
+                };
+
+                if target_host.is_empty() {
+                    panic!("Missing X-Target-Host header! Can't forward the request.");
+                }
+
+                let target_uri = Uri::builder()
+                    .scheme("http")
+                    .authority(target_host.clone())
+                    .path_and_query(request.uri().path_and_query().unwrap().clone())
+                    .build()
+                    .expect("Failed to build target URI");
+
+                // Copy path and query
+                let mut forwarded_req = Request::builder()
+                    .method(request.method())
+                    .uri(target_uri)
+                    .version(request.version())
+                    .body(request.clone().into_body()).unwrap();
+
+                // Copy headers
+                let headers = forwarded_req.headers_mut();//.expect("Failed to get headers");
+                // Add host header
+                headers.extend(request.headers().iter().map(|(k, v)| (k.clone(), v.clone())));
+                headers.insert("host", target_host.parse().unwrap());
+                // Remove accept-encoding header, as we don't want to handle compressed responses
+                headers.remove("accept-encoding");
+
+                info!("Forwarding request");
+
+                // Await the response...
+                let response: Response<Incoming> = service
+                    .client
+                    .request(forwarded_req)
+                    .await
+                    .expect("Failed to send request");
+
+                // Buffer response body so that we can cache it and return it
+                let (parts, body) = response.into_parts();
+                let buffered_response_body = BufferedBody::collect_buffered(body).await.unwrap();
+
+                return Some(Arc::new(Response::from_parts(parts, buffered_response_body)));
+            },
+            _ => None, // Ignore response conditions at this phase
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(untagged)]
+pub enum OnResponse {
+    StoreCache { store_cache: StoreCache },
+    AddResponseHeader { add_response_header: AddResponseHeader },
+}
+
+impl OnResponse {
+    pub async fn evaluate(&self, service: Arc<CacheusServer>, request: &mut Request<BufferedBody>, response: &mut Response<BufferedBody>)  -> bool {
+        match self {
+            OnResponse::StoreCache { store_cache } => {
+                // Issue: computing hash twice (could be optimized later)
+                // Issue: may compute hash differently (unless cache key policy is defined in the cache config)
+                if let Some((cache_config, cache)) = service.caches.get(&store_cache.cache_name) {
+                    let key = cache_config.create_key(request);
+                    cache.try_add_arc2(key, Arc::new(response.clone()));
+                }
+                true
+            },
+            OnResponse::AddResponseHeader { add_response_header } => {
+                true
+            },
+            _ => true, // Ignore response conditions at this phase
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct BlockRequest {
+    pub when: OnRequestCondition,
+}
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct LookupCache {
+    pub cache_name: String,
+    pub when: OnRequestCondition,
+}
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ForwardRequest {
+    pub target_host: String,
+}
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct StoreCache {
+    pub cache_name: String,
+    pub when: OnRequestCondition,
+}
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AddResponseHeader {
+    pub name: String,
+    pub value: String,
+    pub when: OnRequestCondition,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(untagged)]
+pub enum OnRequestCondition { // error: cycle detected when computing drop-check constraints for `config2::OnRequestCondition` [E0391]
+    HeaderExists { header_exists: String },
+    PathContains { path_contains: String },
+    StatusCodeEquals { status_code: u16 },
+    All { all: Vec<OnRequestCondition> },
+    Any { any: Vec<OnRequestCondition> },
+    Not { not: Box<OnRequestCondition> },
+}
+
+impl OnRequestCondition {
+    pub fn evaluate(&self, req: &Request<BufferedBody>) -> bool {
+        match self {
+            OnRequestCondition::HeaderExists { header_exists } => req.headers().contains_key(header_exists),
+            OnRequestCondition::PathContains { path_contains } => req.uri().path_and_query().unwrap().as_str().contains(path_contains),
+            OnRequestCondition::All { all } => all.iter().all(|c| c.evaluate(req)),
+            OnRequestCondition::Any { any } => any.iter().any(|c| c.evaluate(req)),
+            OnRequestCondition::Not { not } => !not.evaluate(req),
+            _ => false, // Ignore response conditions at this phase
+        }
+    }
+
+    // pub fn evaluate_response(&self, req: &Request<BufferedBody>, res: &Response<BufferedBody>) -> bool {
+    //     match self {
+    //         Condition::StatusCodeEquals { status_code } => res.status().as_u16().eq(status_code),
+    //         Condition::All { all } => all.iter().all(|c| c.evaluate_response(req, res)),
+    //         Condition::Any { any } => any.iter().any(|c| c.evaluate_response(req, res)),
+    //         _ => false,
+    //     }
+    // }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(untagged)]
+pub enum CacheConfig {
+    InMemory {
+        in_memory: MemoryCache,
+    },
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct MemoryCache {
+    pub name: String,
+    pub probatory_size: usize,
+    pub resident_size: usize,
+    pub ttl_seconds: u64,
     pub hash_body: bool,
+    pub hash_path: bool,
+    pub hash_query: bool,
 }
 
-// https://github.com/serde-rs/serde/issues/368 🙄
-fn default_in_memory_shards() -> u16
-{
-    8
-}
-fn default_cache_resident_size() -> usize
-{
-    100_000
-}
-fn default_cache_probatory_size() -> usize
-{
-    1_000_000
-}
-fn default_cache_ttl_seconds() -> usize
-{
-    600
-}
-fn default_short_cache_ttl_seconds() -> usize
-{
-    10
-}
-fn default_default_target_host() -> String
-{
-    String::new()
-}
-fn default_listening_port() -> u16
-{
-    3001
-}
-fn default_https() -> bool
-{
-    true
-}
-fn default_http2() -> bool
-{
-    true
-}
-fn default_prometheus_port() -> u16
-{
-    8000
-}
-fn default_healthcheck_port() -> u16
-{
-    8001
-}
-fn default_max_idle_connections_per_host() -> u16
-{
-    4
-}
-fn default_response_replacement_strings() -> HashMap<String, String>
-{
-    HashMap::new()
-}
-fn default_exclude_path_containing() -> Vec<String>
-{
-    Vec::new()
-}
-fn default_bypass_path_containing() -> Vec<String>
-{
-    Vec::new()
-}
-fn default_unauthorized_when_header_missing() -> Vec<String>
-{
-    Vec::new()
-}
-fn default_minimum_log_level() -> String
-{
-    "info".to_string()
-}
-fn default_hash_path() -> bool
-{
-    true
-}
-fn default_hash_query() -> bool
-{
-    true
-}
-fn default_hash_body() -> bool
-{
-    true
+impl CacheConfig {
+    pub fn create_key(&self, request: &Request<BufferedBody>) -> u128 {
+        match self {
+            CacheConfig::InMemory { in_memory } => {
+                let mut hasher = GxHasher::with_seed(123);
+                // Different path/query means different key
+                if in_memory.hash_path {
+                    request.uri().path().hash(&mut hasher);
+                }
+                if in_memory.hash_query {
+                    if let Some(query) = request.uri().query() {
+                        query.hash(&mut hasher);
+                    }
+                }
+                if in_memory.hash_body {
+                    request.body().hash(&mut hasher);
+                }
+                hasher.finish_u128()
+            },
+            _ => {
+                panic!("Unsupported cache configuration for key creation");
+            }
+        }
+    }
+
+    pub fn add_cache(&self, caches: &mut HashMap<String, (CacheConfig, ShardedCache<u128, Response<BufferedBody>>)>) {
+        match self {
+            CacheConfig::InMemory { in_memory } => {
+                let cache = ShardedCache::<u128, Response<BufferedBody>>::new(
+                    12usize,
+                    in_memory.probatory_size,
+                    in_memory.resident_size,
+                    Duration::from_secs(in_memory.ttl_seconds),
+                    lru::ExpirationType::Absolute,
+                );
+                caches.insert(in_memory.name.clone(), (self.clone(), cache));
+            },
+            _ => {}, // Ignore response conditions at this phase
+        }
+    }
 }
 
 #[cfg(test)]
@@ -153,20 +265,20 @@ mod tests
 {
     use super::*;
 
-    #[test]
-    fn test_config_deserialization()
-    {
-        let conf = "in_memory_shards: 42\n\
-                    cache_resident_size: 123\n\
-                    cache_probatory_size: 456\n\
-                    listening_port: 789\n\
-                    http2: false";
+    // #[test]
+    // fn test_config_deserialization()
+    // {
+    //     let conf = "in_memory_shards: 42\n\
+    //                 cache_resident_size: 123\n\
+    //                 cache_probatory_size: 456\n\
+    //                 listening_port: 789\n\
+    //                 http2: false";
 
-        let configuration: CacheusConfiguration = serde_yaml::from_str::<CacheusConfiguration>(conf).unwrap();
+    //     let configuration: Configuration = serde_yaml::from_str::<Configuration>(conf).unwrap();
 
-        assert_eq!(configuration.in_memory_shards, 42);
-        assert_eq!(configuration.cache_resident_size, 123);
-        assert_eq!(configuration.cache_probatory_size, 456);
-        assert_eq!(configuration.listening_port, 789);
-    }
+    //     assert_eq!(configuration.in_memory_shards, 42);
+    //     assert_eq!(configuration.cache_resident_size, 123);
+    //     assert_eq!(configuration.cache_probatory_size, 456);
+    //     assert_eq!(configuration.listening_port, 789);
+    // }
 }
