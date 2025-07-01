@@ -1,117 +1,31 @@
 # yaml-language-server: $schema=./proxy-schema.json
 ---
-listening_port: 8080
+listening_port: 3001
 prometheus_port: 8081
-https: true
+https: false
 http2: false
-minimum_log_level: 'debug'
-
-#rules:
-#  - name: 'Cache downloaded files'
-#    when:
-#      - path_contains: '/download/*'
-#      - status_code_is: [200, 302]
-#    do:
-#      - forward:
-#          target_host: 'http://mywebsite.com'
-#      - use_cache:
-#          name: 'files'
-#      - add_response_header:
-#          name: 'X-Cache-Status'
-#          value: '$cache_status'
-
-middlewares:
-  - block_request:
-      when:
-        not:
-          path_matches: '/download/*'
-  - add_response_header:
-      name: 'X-Cache-Status'
-      value: '$cache_status'
-  - use_cache:
-      cache_name: 'files'
-      when:
-        - status_code_is: [ 200, 302 ]
-  - forward_request:
-      target_host: 'http://mywebsite.com'
+minimum_log_level: debug
 
 on_request:
   - block_request:
       when:
         not:
-          path_matches: '/download/*'
-  - lookup_cache:
-      cache_name: 'files'
+          path_contains: 'download'
   - forward_request:
-      target_host: 'http://mywebsite.com'
+      target_host: google.com
 
 on_response:
-  - add_response_header:
-      name: 'X-Cache-Status'
-      value: '$cache_status'
-  - store_cache: # Will only store in the cache if there was a call upstream
-      cache_name: 'files'
-      when:
-        - status_code_is: [ 200, 302 ]
-
-path_matches: '/download/*'
-add_response_headers:
-  - name: 'X-Cache-Status'
-    value: '$cache_status'
-remove_response_headers:
-  - name: 'X-Forwarded-For'
-use_cache:
-  - name: 'files'
-    when:
-      - status_code_is: [ 200, 302 ]
-target_host: 'http://mywebsite.com'
-
-
-#rules:
-#  - name: 'Cache downloaded files'
-#    on_request:
+#  - add_response_header:
+#      name: 'X-Cache-Status'
+#      value: '$cache_status'
+#  - store_cache: # Will only store in the cache if there was a call upstream
+#      cache_name: 'files'
 #      when:
-#        - path_contains: '/download/*'
-#      do:
-#        - fetch_cache:
-#            name: 'files'
-#        - forward:
-#            target_host: 'http://mywebsite.com'
-#    on_response:
-#      when:
-#        - status_code_is: [200, 302]
-#      do:
-#        - store_cache:
-#            name: 'files'
-#        - add_header:
-#            name: 'X-Cache-Status'
-#            value: '$cache_status'
-#
-#on_request:
-#  - name: 'Cache downloaded files'
-#    when:
-#      - path_contains: '/download/*'
-#    do:
-#      - fetch_cache:
-#          name: 'files'
-#      - forward:
-#          target_host: 'http://mywebsite.com'
-#
-#on_response:
-#  - name: 'Cache downloaded files'
-#    when:
-#      - after_request: 'Cache downloaded files'
-#      - status_code_is: [200, 302]
-#    do:
-#      - store_cache:
-#          name: 'files'
-#      - add_header:
-#          name: 'X-Cache-Status'
-#          value: '$cache_status'
+#        - status_code_is: [ 200, 302 ]
 
 caches:
-  - persistent:
-      name: 'files'
-      max_size: 100mb
-      cache_ttl: 720m
-      hash_body: false
+#  - persistent:
+#      name: 'files'
+#      max_size: 100mb
+#      cache_ttl: 720m
+#      hash_body: false

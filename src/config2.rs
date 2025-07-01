@@ -24,7 +24,6 @@ pub struct Configuration {
     pub http2: bool,
     #[serde_inline_default("info".to_string())]
     pub minimum_log_level: String,
-    pub default_target_host: String,
     pub on_request: Vec<OnRequest>,
     pub on_response: Vec<OnResponse>,
     pub caches: Vec<Cache>,
@@ -40,9 +39,10 @@ pub enum OnRequest {
 
 impl OnRequest {
     pub async fn evaluate(&self, service: Arc<CacheusServer>, request: &mut Request<BufferedBody>)  -> Option<Response<BufferedBody>> {
+        info!("evaluating request condition: {:?}", self);
         match self {
             OnRequest::BlockRequest { block_request } => {
-                if block_request.when.evaluate(request) {
+                if !block_request.when.evaluate(request) {
                     return Some(Response::builder().status(403).body(BufferedBody::from_bytes(b"")).unwrap())
                 }
                 None
@@ -53,6 +53,8 @@ impl OnRequest {
                 None
             },
             OnRequest::ForwardRequest { forward_request } => {
+
+                info!("forwarding request to target host: {}", forward_request.target_host);
 
                 let target_host = match request.headers().get("x-target-host") {
                     Some(value) => value.to_str().unwrap().to_string(),
@@ -84,8 +86,8 @@ impl OnRequest {
                 headers.insert("host", target_host.parse().unwrap());
                 // Remove accept-encoding header, as we don't want to handle compressed responses
                 headers.remove("accept-encoding");
-                
-                trace!("Forwarding request");
+
+                info!("Forwarding request");
 
                 // Await the response...
                 let response: Response<Incoming> = service
@@ -99,7 +101,7 @@ impl OnRequest {
                 let mut buffered_response_body = BufferedBody::collect_buffered(body).await.unwrap();
 
                 let response = Response::from_parts(parts, buffered_response_body);
-                
+
                 return Some(response);
             },
             _ => None, // Ignore response conditions at this phase
@@ -155,12 +157,13 @@ pub struct AddResponseHeader {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(untagged)]
-pub enum OnRequestCondition {
+pub enum OnRequestCondition { // error: cycle detected when computing drop-check constraints for `config2::OnRequestCondition` [E0391]
     HeaderExists { header_exists: String },
     PathContains { path_contains: String },
     StatusCodeEquals { status_code: u16 },
     All { all: Vec<OnRequestCondition> },
     Any { any: Vec<OnRequestCondition> },
+    Not { not: Box<OnRequestCondition> },
 }
 
 impl OnRequestCondition {
@@ -170,6 +173,7 @@ impl OnRequestCondition {
             OnRequestCondition::PathContains { path_contains } => req.uri().path_and_query().unwrap().as_str().contains(path_contains),
             OnRequestCondition::All { all } => all.iter().all(|c| c.evaluate(req)),
             OnRequestCondition::Any { any } => any.iter().any(|c| c.evaluate(req)),
+            OnRequestCondition::Not { not } => !not.evaluate(req),
             _ => false, // Ignore response conditions at this phase
         }
     }

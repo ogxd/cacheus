@@ -23,6 +23,10 @@ name = "hello"
 harness = false
 
 [[example]]
+name = "download"
+harness = false
+
+[[example]]
 name = "hello_grpc"
 harness = false
 

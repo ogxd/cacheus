@@ -263,10 +263,14 @@ impl CacheusServer
                 },
             }
         }
+        
+        info!("on_request executed");
 
         if buffered_response.is_none() {
-            panic!();
+            panic!("Oh shit!");
         }
+
+        info!("has response!");
 
         let mut buffered_response = buffered_response.unwrap();
 
@@ -275,6 +279,8 @@ impl CacheusServer
                 // Not sure what to do here?
             }
         }
+
+        info!("on_response executed");
 
         return (Ok(buffered_response), Status::Hit);
     }
