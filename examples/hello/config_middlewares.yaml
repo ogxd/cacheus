@@ -6,6 +6,29 @@ http2: false
 minimum_log_level: 'debug'
 default_target_host: 'www.nuget.org'
 
+middlewares:
+  - block_request:
+      status_code: 401
+      when:
+        header_exists: 'authorization'
+  - block_request:
+      status_code: 404
+      when:
+        - any:
+            - path_contains: '*metadata/microsoft.*'
+            - path_contains: '*metadata/system.*'
+            - path_contains: '*metadata/grpc.*'
+            - path_contains: '*metadata/xunit.*'
+  - add_response_header:
+      name: 'X-Cache-Status'
+      value: '$cache_status'
+  - use_cache:
+      cache_name: 'files'
+      when:
+        - status_code_is: [ 200, 302 ]
+  - forward_request:
+      target_host: 'http://mywebsite.com'
+
 rules:
   - name: 'Reject unauthorized requests'
     when:

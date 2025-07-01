@@ -1,5 +1,5 @@
 import grpc from 'k6/net/grpc';
-import { check, sleep } from 'k6';
+import { check, sleep } from 'qps/k6';
 
 const client = new grpc.Client();
 client.load(['definitions'], 'hello.proto');

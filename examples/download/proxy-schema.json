@@ -1,0 +1,22 @@
+{
+  "type": "object",
+  "properties": {
+    "middlewares": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "minProperties": 1,
+        "maxProperties": 1,
+        "patternProperties": {
+          "^(request_filter|cache_lookup|forward|cache_store|response_header|load_balancer)$": {
+            "type": "object",
+            "properties": {
+              // define per-middleware fields here
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  }
+}

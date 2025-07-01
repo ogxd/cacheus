@@ -1,3 +1,4 @@
+default_target_host: 127.0.0.1:3002
 listening_port: 3001
 https: false
 http2: false
