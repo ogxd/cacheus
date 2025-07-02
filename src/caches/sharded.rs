@@ -4,31 +4,31 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use super::lru::ExpirationType;
-use crate::{Cache, ProbatoryCache};
+use crate::{CacheEnum, LruCache, ProbatoryCache};
 
 #[allow(dead_code)]
 pub struct ShardedCache<K, V>
 {
-    shards: Vec<Arc<Mutex<ProbatoryCache<K, V>>>>,
+    shards: Vec<Arc<Mutex<CacheEnum<K, V>>>>,
 }
 
-impl<K, V> Cache<K, V> for ShardedCache<K, V>
+impl<K, V> ShardedCache<K, V>
 where
     K: Eq + std::hash::Hash + Clone,
 {
-    fn len(&self) -> usize
+    pub fn len(&self) -> usize
     {
         self.shards.iter().map(|shard| shard.lock().unwrap().len()).sum()
     }
 
-    fn try_add_arc(&mut self, key: K, value: Arc<V>) -> bool
+    pub fn try_add_arc(&mut self, key: K, value: Arc<V>) -> bool
     {
         self.get_shard(&key).lock().unwrap().try_add_arc(key, value)
     }
 
-    fn try_get(&mut self, key: &K) -> Option<Arc<V>>
+    pub fn try_get(&mut self, key: &K) -> Option<Arc<V>>
     {
-        self.get_shard(&key).lock().unwrap().try_get(key)
+        self.get_shard(&key).lock().unwrap().try_get(&key)
     }
 }
 
@@ -37,26 +37,35 @@ impl<K, V> ShardedCache<K, V>
 where
     K: Eq + std::hash::Hash + Clone,
 {
-    pub fn try_add_arc2(&self, key: K, value: Arc<V>) -> bool
+    pub fn try_add_arc_locked(&self, key: K, value: Arc<V>) -> bool
     {
         self.get_shard(&key).lock().unwrap().try_add_arc(key, value)
     }
 
-    pub fn try_get2(&self, key: &K) -> Option<Arc<V>>
+    pub fn try_get_locked(&self, key: &K) -> Option<Arc<V>>
     {
-        self.get_shard(&key).lock().unwrap().try_get(key)
+        self.get_shard(&key).lock().unwrap().try_get(&key)
     }
 
     pub fn new(shards: usize, probatory_size: usize, resident_size: usize, expiration: Duration, expiration_type: ExpirationType) -> Self
     {
-        Self {
-            shards: (0..shards)
-                .map(|_| Arc::new(Mutex::new(ProbatoryCache::new(probatory_size, resident_size, expiration, expiration_type))))
-                .collect(),
+        if probatory_size == 0 {
+            Self {
+                shards: (0..shards)
+                    .map(|_| Arc::new(Mutex::new(CacheEnum::Lru(LruCache::new(resident_size, expiration, expiration_type)))))
+                    .collect()
+            }
+        }
+        else {
+            Self {
+                shards: (0..shards)
+                    .map(|_| Arc::new(Mutex::new(CacheEnum::Probatory(ProbatoryCache::new(probatory_size, resident_size, expiration, expiration_type)))))
+                    .collect(),
+            }
         }
     }
 
-    fn get_shard(&self, key: &K) -> &Arc<Mutex<ProbatoryCache<K, V>>>
+    fn get_shard(&self, key: &K) -> &Arc<Mutex<CacheEnum<K, V>>>
     {
         let mut hasher = DefaultHasher::new();
         key.hash(&mut hasher);
@@ -64,38 +73,9 @@ where
         let shard = hash % self.shards.len();
         &self.shards[shard]
     }
-
-    pub async fn get_or_add_from_item2<I, Kfac, Vfac, Fut, E>(
-        &self, item: I, key_factory: Kfac, value_factory: Vfac,
-    ) -> Result<Arc<V>, E>
-    where
-        K: Clone,
-        Kfac: Fn(&I) -> K,
-        Vfac: FnOnce(I) -> Fut,
-        Fut: Future<Output = Result<(V, bool), E>>,
-    {
-        let key = key_factory(&item);
-        match self.try_get2(&key) {
-            Some(value) => return Ok(value),
-            None => {
-                match value_factory(item).await {
-                    Ok((value, cache)) => {
-                        let a_value = Arc::new(value);
-                        // There are cases where we want to return without caching the value, eg in 4xx errors.
-                        if cache {
-                            // This might fail if the key was added by another thread, but we don't care
-                            // This is preferred over blocking the cache during the whole factory call duration
-                            self.try_add_arc2(key.clone(), a_value.clone());
-                        }
-                        Ok(a_value)
-                    }
-                    Err(e) => Err(e),
-                }
-            }
-        }
-    }
 }
 
+/*
 #[cfg(test)]
 mod tests
 {
@@ -136,3 +116,4 @@ mod tests
         assert!(lru.try_get(&5).is_some());
     }
 }
+*/

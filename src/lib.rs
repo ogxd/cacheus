@@ -13,11 +13,9 @@ mod status;
 
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
-use std::hash::Hash;
 use std::net::SocketAddr;
 use std::str::FromStr;
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::sync::Arc;
 
 pub use caches::*;
 pub use collections::*;
@@ -25,9 +23,7 @@ pub use config::Configuration;
 use buffered_body::BufferedBody;
 use executor::TokioExecutor;
 use futures::join;
-use gxhash::GxHasher;
 use hyper::body::Incoming;
-use hyper::http::Uri;
 use hyper::server::conn::{http1, http2};
 use hyper::service::service_fn;
 use hyper::{Request, Response};
@@ -36,7 +32,6 @@ use hyper_tls::HttpsConnector;
 use hyper_util::client::legacy::Client;
 use hyper_util::rt::TokioIo;
 use log::LevelFilter;
-use log::Level::*;
 use serde::de::StdError;
 use metrics::Metrics;
 use simplelog::{ColorChoice, CombinedLogger, Config, TermLogger, TerminalMode};
@@ -204,19 +199,19 @@ impl CacheusServer
         Ok(())
     }
 
-    pub async fn healthcheck(_req: Request<hyper::body::Incoming>) -> Result<Response<BufferedBody>, hyper::Error>
+    async fn healthcheck(_req: Request<hyper::body::Incoming>) -> Result<Response<BufferedBody>, hyper::Error>
     {
         Ok(Response::new(BufferedBody::from_bytes(b"Healthy")))
     }
 
-    pub async fn prometheus(
+    async fn prometheus(
         server: Arc<CacheusServer>, _: Request<hyper::body::Incoming>,
     ) -> Result<Response<BufferedBody>, hyper::Error>
     {
         Ok(Response::new(BufferedBody::from_bytes(&server.metrics.encode())))
     }
 
-    pub async fn call_async(
+    async fn call_async(
         service: Arc<CacheusServer>, request: Request<Incoming>,
     ) -> Result<Response<BufferedBody>, CacheusError>
     {
@@ -242,9 +237,7 @@ impl CacheusServer
         }
     }
 
-    pub async fn call_internal_async(
-        service: Arc<CacheusServer>, request: Request<Incoming>,
-    ) -> (Result<Response<BufferedBody>, CacheusError>, Status)
+    async fn call_internal_async(service: Arc<CacheusServer>, request: Request<Incoming>,) -> (Result<Response<BufferedBody>, CacheusError>, Status)
     {
         // Request buffering
         let (parts, body) = request.into_parts();
@@ -296,13 +289,13 @@ struct CacheusError
 
 impl std::fmt::Debug for CacheusError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        todo!()
+        write!(f, "CacheusError: {}", self.message)
     }
 }
 
 impl Display for CacheusError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        todo!()
+        write!(f, "CacheusError: {}", self.message)
     }
 }
 

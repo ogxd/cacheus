@@ -8,8 +8,7 @@ use crate::buffered_body::BufferedBody;
 use hyper::{Request, Response, Uri};
 use hyper::body::Incoming;
 use serde_inline_default::serde_inline_default;
-use crate::{lru, Cache, CacheusServer, ShardedCache};
-use crate::status::Status;
+use crate::{lru, CacheusServer, ShardedCache};
 
 #[serde_inline_default]
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -26,8 +25,11 @@ pub struct Configuration {
     pub http2: bool,
     #[serde_inline_default("info".to_string())]
     pub minimum_log_level: String,
+    #[serde(default)]
     pub on_request: Vec<OnRequest>,
+    #[serde(default)]
     pub on_response: Vec<OnResponse>,
+    #[serde(default)]
     pub caches: Vec<CacheConfig>,
 }
 
@@ -44,7 +46,7 @@ impl OnRequest {
         info!("evaluating request condition: {:?}", self);
         match self {
             OnRequest::BlockRequest { block_request } => {
-                if !block_request.when.evaluate(request) {
+                if block_request.when.as_ref().is_none_or(|w| w.evaluate(request)) {
                     return Some(Arc::new(Response::builder().status(403).body(BufferedBody::from_bytes(b"")).unwrap()))
                 }
                 None
@@ -52,8 +54,11 @@ impl OnRequest {
             OnRequest::LookupCache { lookup_cache } => {
                 if let Some((cache_config, cache)) = service.caches.get(&lookup_cache.cache_name) {
                     let key = cache_config.create_key(request);
-                    return match cache.try_get2(&key) {
-                        Some(value) => Some(value),
+                    return match cache.try_get_locked(&key) {
+                        Some(value) => {
+                            info!("Cache hit for key: {}", key);
+                            Some(value)
+                        },
                         None => None
                     };
                 }
@@ -115,55 +120,21 @@ impl OnRequest {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(untagged)]
-pub enum OnResponse {
-    StoreCache { store_cache: StoreCache },
-    AddResponseHeader { add_response_header: AddResponseHeader },
-}
-
-impl OnResponse {
-    pub async fn evaluate(&self, service: Arc<CacheusServer>, request: &mut Request<BufferedBody>, response: &mut Response<BufferedBody>)  -> bool {
-        match self {
-            OnResponse::StoreCache { store_cache } => {
-                // Issue: computing hash twice (could be optimized later)
-                // Issue: may compute hash differently (unless cache key policy is defined in the cache config)
-                if let Some((cache_config, cache)) = service.caches.get(&store_cache.cache_name) {
-                    let key = cache_config.create_key(request);
-                    cache.try_add_arc2(key, Arc::new(response.clone()));
-                }
-                true
-            },
-            OnResponse::AddResponseHeader { add_response_header } => {
-                true
-            },
-            _ => true, // Ignore response conditions at this phase
-        }
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct BlockRequest {
-    pub when: OnRequestCondition,
+    #[serde(default)]
+    pub when: Option<OnRequestCondition>,
 }
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct LookupCache {
     pub cache_name: String,
-    pub when: OnRequestCondition,
+    #[serde(default)]
+    pub when: Option<OnRequestCondition>,
 }
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ForwardRequest {
     pub target_host: String,
-}
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct StoreCache {
-    pub cache_name: String,
-    pub when: OnRequestCondition,
-}
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct AddResponseHeader {
-    pub name: String,
-    pub value: String,
-    pub when: OnRequestCondition,
+    #[serde(default)]
+    pub when: Option<OnRequestCondition>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -201,21 +172,75 @@ impl OnRequestCondition {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(untagged)]
+pub enum OnResponse {
+    StoreCache { store_cache: StoreCache },
+    AddResponseHeader { add_response_header: AddResponseHeader },
+}
+
+impl OnResponse {
+    pub async fn evaluate(&self, service: Arc<CacheusServer>, request: &mut Request<BufferedBody>, response: &mut Response<BufferedBody>)  -> bool {
+        match self {
+            OnResponse::StoreCache { store_cache } => {
+                // Issue: computing hash twice (could be optimized later)
+                // Issue: may compute hash differently (unless cache key policy is defined in the cache config)
+                if let Some((cache_config, cache)) = service.caches.get(&store_cache.cache_name) {
+                    let key = cache_config.create_key(request);
+                    cache.try_add_arc_locked(key, Arc::new(response.clone()));
+                }
+                true
+            },
+            OnResponse::AddResponseHeader { add_response_header } => {
+                true
+            },
+            _ => true, // Ignore response conditions at this phase
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct StoreCache {
+    pub cache_name: String,
+    //pub when: OnRequestCondition,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AddResponseHeader {
+    pub name: String,
+    pub value: String,
+    //pub when: OnRequestCondition,
+}
+
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(untagged)]
 pub enum CacheConfig {
     InMemory {
         in_memory: MemoryCache,
     },
 }
 
+#[serde_inline_default]
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct MemoryCache {
     pub name: String,
+
+    #[serde_inline_default(0)]
     pub probatory_size: usize,
+
+    #[serde_inline_default(100_000)]
     pub resident_size: usize,
+
+    #[serde_inline_default(3600)]
     pub ttl_seconds: u64,
-    pub hash_body: bool,
+
+    #[serde_inline_default(true)]
     pub hash_path: bool,
+
+    #[serde_inline_default(true)]
     pub hash_query: bool,
+
+    #[serde_inline_default(true)]
+    pub hash_body: bool,
 }
 
 impl CacheConfig {

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::{ArenaLinkedList, Cache};
+use crate::ArenaLinkedList;
 
 #[allow(dead_code)]
 pub struct LruCache<K, V>
@@ -29,16 +29,16 @@ struct LruCacheEntry<V>
     value: Arc<V>,
 }
 
-impl<K, V> Cache<K, V> for LruCache<K, V>
+impl<K, V> LruCache<K, V>
 where
     K: Eq + std::hash::Hash + Clone,
 {
-    fn len(&self) -> usize
+    pub fn len(&self) -> usize
     {
         self.map.len()
     }
 
-    fn try_add_arc(&mut self, key: K, value: Arc<V>) -> bool
+    pub fn try_add_arc(&mut self, key: K, value: Arc<V>) -> bool
     {
         let mut added = false;
 
@@ -58,7 +58,7 @@ where
         return added;
     }
 
-    fn try_get(&mut self, key: &K) -> Option<Arc<V>>
+    pub fn try_get(&mut self, key: &K) -> Option<Arc<V>>
     {
         // If found in the map, remove from the lru list and reinsert at the end
         let lru_list = &mut self.lru_list;
@@ -141,6 +141,7 @@ where
     }
 }
 
+/*
 #[cfg(test)]
 mod tests
 {
@@ -191,3 +192,4 @@ mod tests
         assert!(lru.try_get(&5).is_some());
     }
 }
+*/

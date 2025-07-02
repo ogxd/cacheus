@@ -11,6 +11,8 @@ on_request:
       when:
         not:
           path_contains: 'download'
+  - lookup_cache:
+      cache_name: files
   - forward_request:
       target_host: google.com
 
@@ -18,14 +20,15 @@ on_response:
 #  - add_response_header:
 #      name: 'X-Cache-Status'
 #      value: '$cache_status'
-#  - store_cache: # Will only store in the cache if there was a call upstream
-#      cache_name: 'files'
-#      when:
-#        - status_code_is: [ 200, 302 ]
+  - store_cache: # Will only store in the cache if there was a call upstream
+      cache_name: files
+      # when:
+      #   - status_code_is: [ 200, 302 ]
 
 caches:
-#  - persistent:
-#      name: 'files'
-#      max_size: 100mb
-#      cache_ttl: 720m
-#      hash_body: false
+  - in_memory:
+      name: files
+      ttl_seconds: 60
+      hash_path: true
+      hash_query: true
+      hash_body: false
