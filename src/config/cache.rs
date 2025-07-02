@@ -23,6 +23,9 @@ pub enum CacheConfig {
 pub struct MemoryCache {
     pub name: String,
 
+    #[serde_inline_default(8)]
+    pub shards: usize,
+
     #[serde_inline_default(0)]
     pub probatory_size: usize,
 
@@ -70,7 +73,7 @@ impl CacheConfig {
         match self {
             CacheConfig::InMemory { in_memory } => {
                 let cache = ShardedCache::<u128, Response<BufferedBody>>::new(
-                    12usize,
+                    in_memory.shards,
                     in_memory.probatory_size,
                     in_memory.resident_size,
                     Duration::from_secs(in_memory.ttl_seconds),
