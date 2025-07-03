@@ -141,16 +141,17 @@ where
     }
 }
 
-/*
 #[cfg(test)]
 mod tests
 {
+    use crate::CacheEnum;
+
     use super::*;
 
     #[test]
     fn basic()
     {
-        let mut lru = LruCache::new(4, Duration::MAX, ExpirationType::Absolute);
+        let mut lru = CacheEnum::Lru(LruCache::new(4, Duration::MAX, ExpirationType::Absolute));
         assert!(lru.try_get(&1).is_none());
         assert!(lru.try_add(1, "hello"));
         assert!(!lru.try_add(1, "hello"));
@@ -160,7 +161,7 @@ mod tests
     #[test]
     fn trimming()
     {
-        let mut lru = LruCache::new(4, Duration::MAX, ExpirationType::Absolute);
+        let mut lru = CacheEnum::Lru(LruCache::new(4, Duration::MAX, ExpirationType::Absolute));
         assert!(lru.try_add(1, "h"));
         assert!(lru.try_add(2, "e"));
         assert!(lru.try_add(3, "l"));
@@ -177,7 +178,7 @@ mod tests
     #[test]
     fn reordering()
     {
-        let mut lru = LruCache::new(4, Duration::MAX, ExpirationType::Absolute);
+        let mut lru = CacheEnum::Lru(LruCache::new(4, Duration::MAX, ExpirationType::Absolute));
         assert!(lru.try_add(1, "h"));
         assert!(lru.try_add(2, "e"));
         assert!(lru.try_add(3, "l"));
@@ -192,4 +193,3 @@ mod tests
         assert!(lru.try_get(&5).is_some());
     }
 }
-*/

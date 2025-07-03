@@ -2,7 +2,6 @@ use std::{sync::Arc, time::Duration};
 
 use super::lru::ExpirationType;
 use crate::LruCache;
-use crate::CacheEnum;
 
 #[allow(dead_code)]
 pub struct ProbatoryCache<K, V>
@@ -54,16 +53,17 @@ where
     }
 }
 
-/*
 #[cfg(test)]
 mod tests
 {
+    use crate::CacheEnum;
+
     use super::*;
 
     #[test]
     fn basic()
     {
-        let mut lru = ProbatoryCache::new(40, 4, Duration::MAX, ExpirationType::Absolute);
+        let mut lru = CacheEnum::Probatory(ProbatoryCache::new(40, 4, Duration::MAX, ExpirationType::Absolute));
         assert!(lru.try_get(&1).is_none());
         assert!(lru.try_add(1, "hello"));
         assert!(lru.try_get(&1).is_none(), "Key should only be in the probatory cache");
@@ -75,7 +75,7 @@ mod tests
     #[test]
     fn trimming()
     {
-        let mut lru = ProbatoryCache::new(40, 4, Duration::MAX, ExpirationType::Absolute);
+        let mut lru = CacheEnum::Probatory(ProbatoryCache::new(40, 4, Duration::MAX, ExpirationType::Absolute));
         // Add every entry twice for them to enter the resident cache
         assert!(lru.try_add(1, "h"));
         assert!(lru.try_add(1, "h"));
@@ -95,4 +95,3 @@ mod tests
         assert!(lru.try_get(&5).is_some());
     }
 }
-*/
