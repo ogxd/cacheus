@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use super::lru::ExpirationType;
-use crate::LruCache;
+use crate::{caches::Cache, LruCache};
 
 #[allow(dead_code)]
 pub struct ProbatoryCache<K, V>
@@ -10,30 +10,28 @@ pub struct ProbatoryCache<K, V>
     resident: LruCache<K, V>,
 }
 
-impl<K, V> ProbatoryCache<K, V>
-where
-    K: Eq + std::hash::Hash + Clone,
+impl<K: Eq + std::hash::Hash + Clone, V> Cache<K, V> for ProbatoryCache<K, V>
 {
-    pub fn len(&self) -> usize
+    fn len(&self) -> usize
     {
         self.resident.len()
     }
 
-    pub fn try_add_arc(&mut self, key: K, value: Arc<V>) -> bool {
+    fn try_add(&mut self, key: K, value: V) -> bool {
         // Try to add to probatory cache first (if it exists)
         let is_new_to_probatory = self.probatory
             .as_mut()
-            .map_or(false, |probatory| probatory.try_add_arc(key.clone(), Arc::new(())));
+            .map_or(false, |probatory| probatory.try_add(key.clone(), ()));
 
         if is_new_to_probatory {
             return true;
         }
 
         // If not new to probatory or probatory doesn't exist, try resident cache
-        self.resident.try_add_arc(key, value)
+        self.resident.try_add(key, value)
     }
 
-    pub fn try_get(&mut self, key: &K) -> Option<Arc<V>>
+    fn try_get(&mut self, key: &K) -> Option<Arc<V>>
     {
         self.resident.try_get(key)
     }

@@ -21,7 +21,7 @@ impl OnResponse {
                 // Issue: may compute hash differently (unless cache key policy is defined in the cache config)
                 if let Some((cache_config, cache)) = service.caches.get(&store_cache.cache_name) {
                     let key = cache_config.create_key(request);
-                    cache.try_add_arc_locked(key, Arc::new(response.clone()));
+                    cache.try_add_arc_locked(key, response.clone());
                 }
                 true
             },

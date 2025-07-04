@@ -1,8 +1,3 @@
-//! Configuration module for Cacheus server
-//! 
-//! This module contains all configuration-related structures and logic,
-//! organized into logical submodules.
-
 pub mod server;
 pub mod request;
 pub mod response;

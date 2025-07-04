@@ -1,32 +1,32 @@
-use std::future::Future;
 use std::hash::{DefaultHasher, Hasher};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use super::lru::ExpirationType;
+use crate::caches::Cache;
 use crate::{CacheEnum, LruCache, ProbatoryCache};
 
 #[allow(dead_code)]
 pub struct ShardedCache<K, V>
+where
+    K: Eq + std::hash::Hash + Clone,
 {
     shards: Vec<Arc<Mutex<CacheEnum<K, V>>>>,
 }
 
-impl<K, V> ShardedCache<K, V>
-where
-    K: Eq + std::hash::Hash + Clone,
+impl<K: Eq + std::hash::Hash + Clone, V> Cache<K, V> for ShardedCache<K, V>
 {
-    pub fn len(&self) -> usize
+    fn len(&self) -> usize
     {
         self.shards.iter().map(|shard| shard.lock().unwrap().len()).sum()
     }
 
-    pub fn try_add_arc(&mut self, key: K, value: Arc<V>) -> bool
+    fn try_add(&mut self, key: K, value: V) -> bool
     {
-        self.get_shard(&key).lock().unwrap().try_add_arc(key, value)
+        self.get_shard(&key).lock().unwrap().try_add(key, value)
     }
 
-    pub fn try_get(&mut self, key: &K) -> Option<Arc<V>>
+    fn try_get(&mut self, key: &K) -> Option<Arc<V>>
     {
         self.get_shard(&key).lock().unwrap().try_get(&key)
     }
@@ -37,9 +37,9 @@ impl<K, V> ShardedCache<K, V>
 where
     K: Eq + std::hash::Hash + Clone,
 {
-    pub fn try_add_arc_locked(&self, key: K, value: Arc<V>) -> bool
+    pub fn try_add_arc_locked(&self, key: K, value: V) -> bool
     {
-        self.get_shard(&key).lock().unwrap().try_add_arc(key, value)
+        self.get_shard(&key).lock().unwrap().try_add(key, value)
     }
 
     pub fn try_get_locked(&self, key: &K) -> Option<Arc<V>>
