@@ -1,29 +1,18 @@
-# yaml-language-server: $schema=./proxy-schema.json
----
 listening_port: 3001
 prometheus_port: 8081
 https: false
 http2: false
 minimum_log_level: debug
 
-on_request:
+middlewares:
   - block_request:
       when:
         not:
           path_contains: 'download'
-  - lookup_cache:
+  - use_cache:
       cache_name: files
   - forward_request:
       target_host: google.com
-
-on_response:
-#  - add_response_header:
-#      name: 'X-Cache-Status'
-#      value: '$cache_status'
-  - store_cache: # Will only store in the cache if there was a call upstream
-      cache_name: files
-      # when:
-      #   - status_code_is: [ 200, 302 ]
 
 caches:
   - in_memory:
