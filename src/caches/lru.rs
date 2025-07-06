@@ -150,7 +150,7 @@ mod tests
     #[test]
     fn basic()
     {
-        let mut lru = CacheEnum::Lru(LruCache::new(4, Duration::MAX, ExpirationType::Absolute));
+        let mut lru: CacheEnum<u32, &str> = CacheEnum::Lru(LruCache::new(4, Duration::MAX, ExpirationType::Absolute));
         assert!(lru.try_get(&1).is_none());
         assert!(lru.try_add(1, "hello"));
         assert!(!lru.try_add(1, "hello"));

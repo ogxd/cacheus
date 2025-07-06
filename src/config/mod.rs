@@ -1,12 +1,11 @@
-pub mod server;
-pub mod request;
-pub mod response;
+pub mod configuration;
 pub mod cache;
 pub mod conditions;
+pub mod middleware;
 
 // Re-export main types for convenience
-pub use server::Configuration;
-pub use request::{OnRequest, BlockRequest, LookupCache, ForwardRequest};
-pub use response::{OnResponse, StoreCache, AddResponseHeader};
+pub use configuration::Configuration;
 pub use cache::{CacheConfig, MemoryCache};
-pub use conditions::OnRequestCondition;
+pub use conditions::{OnRequestCondition, OnResponseCondition};
+
+pub use middleware::{MiddlewareEnum, Block, Cache, Forward, AddHeader};
