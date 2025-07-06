@@ -4,45 +4,46 @@ extern crate log;
 mod buffered_body;
 mod caches;
 mod collections;
+// pub mod config;
 pub mod config;
 mod executor;
 mod metrics;
 mod status;
+// mod server;
 
-use std::hash::Hash;
+use std::collections::HashMap;
+use std::fmt::{Display, Formatter};
 use std::net::SocketAddr;
+use std::ops::Deref;
 use std::str::FromStr;
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::sync::Arc;
 
 pub use caches::*;
 pub use collections::*;
-pub use config::CacheusConfiguration;
+pub use config::{Configuration, MiddlewareEnum};
 use buffered_body::BufferedBody;
 use executor::TokioExecutor;
 use futures::join;
-use gxhash::GxHasher;
-use hyper::body::Incoming;
-use hyper::http::Uri;
+use hyper::body::{Body, Incoming};
 use hyper::server::conn::{http1, http2};
 use hyper::service::service_fn;
-use hyper::{Request, Response};
+use hyper::{Request, Response, Uri};
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_tls::HttpsConnector;
 use hyper_util::client::legacy::Client;
 use hyper_util::rt::TokioIo;
 use log::LevelFilter;
-use log::Level::*;
+use serde::de::StdError;
 use metrics::Metrics;
 use simplelog::{ColorChoice, CombinedLogger, Config, TermLogger, TerminalMode};
 use status::Status;
 use tokio::net::TcpListener;
+use crate::config::CacheConfig;
 
 pub struct CacheusServer
 {
-    configuration: CacheusConfiguration,
-    cache: ShardedCache<u128, Response<BufferedBody>>,
-    short_cache: ShardedCache<u128, Response<BufferedBody>>,
+    configuration: Configuration,
+    caches: HashMap<String, (CacheConfig, ShardedCache<u128, Response<BufferedBody>>)>,
     metrics: Metrics,
     client: Client<HttpsConnector<HttpConnector>, BufferedBody>,
 }
@@ -51,20 +52,20 @@ impl CacheusServer
 {
     pub async fn start_from_config_str(config_str: &str)
     {
-        let configuration: CacheusConfiguration =
-            serde_yaml::from_str::<CacheusConfiguration>(config_str).expect("Could not parse configuration file");
+        let configuration: Configuration =
+            serde_yaml::from_str::<Configuration>(config_str).expect("Could not parse configuration file");
         CacheusServer::start(configuration).await.unwrap();
     }
 
     pub async fn start_from_config_file(config_file: &str)
     {
         let contents = std::fs::read_to_string(config_file).expect("Could not find configuration file");
-        let configuration: CacheusConfiguration =
-            serde_yaml::from_str::<CacheusConfiguration>(&contents).expect("Could not parse configuration file");
+        let configuration: Configuration =
+            serde_yaml::from_str::<Configuration>(&contents).expect("Could not parse configuration file");
         CacheusServer::start(configuration).await.unwrap();
     }
 
-    pub async fn start(configuration: CacheusConfiguration) -> Result<(), std::io::Error>
+    pub async fn start(configuration: Configuration) -> Result<(), std::io::Error>
     {
         CombinedLogger::init(vec![TermLogger::new(
             LevelFilter::from_str(configuration.minimum_log_level.as_str()).unwrap(),
@@ -84,23 +85,17 @@ impl CacheusServer
                 HttpsConnector::new_with_connector(http)
             },
         };
+
+        let mut caches = HashMap::new();
+
+        // Initialize caches from configuration
+        for cache in &configuration.caches {
+            cache.add_cache(&mut caches);
+        }
         
         let server = Arc::new(CacheusServer {
             configuration: configuration.clone(),
-            cache: ShardedCache::<u128, Response<BufferedBody>>::new(
-                configuration.in_memory_shards as usize,
-                configuration.cache_probatory_size,
-                configuration.cache_resident_size,
-                Duration::from_secs(configuration.cache_ttl_seconds as u64),
-                lru::ExpirationType::Absolute,
-            ),
-            short_cache: ShardedCache::<u128, Response<BufferedBody>>::new(
-                configuration.in_memory_shards as usize,
-                0,
-                1000,
-                Duration::from_secs(configuration.short_cache_ttl_seconds as u64),
-                lru::ExpirationType::Absolute,
-            ),
+            caches: caches,
             metrics: Metrics::new(),
             client: Client::builder(TokioExecutor)
                 .http2_only(configuration.http2)
@@ -205,21 +200,21 @@ impl CacheusServer
         Ok(())
     }
 
-    pub async fn healthcheck(_req: Request<hyper::body::Incoming>) -> Result<Response<BufferedBody>, hyper::Error>
+    async fn healthcheck(_req: Request<hyper::body::Incoming>) -> Result<Response<BufferedBody>, hyper::Error>
     {
         Ok(Response::new(BufferedBody::from_bytes(b"Healthy")))
     }
 
-    pub async fn prometheus(
+    async fn prometheus(
         server: Arc<CacheusServer>, _: Request<hyper::body::Incoming>,
     ) -> Result<Response<BufferedBody>, hyper::Error>
     {
         Ok(Response::new(BufferedBody::from_bytes(&server.metrics.encode())))
     }
 
-    pub async fn call_async(
+    async fn call_async(
         service: Arc<CacheusServer>, request: Request<Incoming>,
-    ) -> Result<Response<BufferedBody>, hyper::Error>
+    ) -> Result<Response<BufferedBody>, CacheusError>
     {
         trace!("Request received");
 
@@ -230,7 +225,7 @@ impl CacheusServer
         let elapsed = timestamp.elapsed();
         let status_str = status.to_string();
         service.metrics.request_duration.with_label_values(&[&status_str]).observe(elapsed.as_secs_f64());
-        service.metrics.cache_entries.set(service.cache.len() as f64);
+        //service.metrics.cache_entries.set(service.cache.len() as f64);
         match response {
             Ok(ok) => {
                 service.metrics.requests.with_label_values(&[&status_str, ok.status().as_str()]).inc();
@@ -243,236 +238,59 @@ impl CacheusServer
         }
     }
 
-    pub async fn call_internal_async(
-        service: Arc<CacheusServer>, request: Request<Incoming>,
-    ) -> (Result<Response<BufferedBody>, hyper::Error>, Status)
+    async fn call_internal_async(service: Arc<CacheusServer>, request: Request<Incoming>,) -> (Result<Response<BufferedBody>, CacheusError>, Status)
     {
-        let trace = Arc::new(Mutex::new(String::new()));
-
-        if log_enabled!(Debug) {
-            trace.lock().unwrap().push_str(&format!("\nReceived request to path: {:?}", request.uri()));
-        }
-
-        // If path contains any of service.configuration.exclude_path_containing, return 404
-        if service.configuration.exclude_path_containing.len() > 0 {
-            let lowercase_path = request.uri().path().to_lowercase();
-            for path in &service.configuration.exclude_path_containing {
-                if lowercase_path.contains(path) {
-                    return (Ok(Response::builder().status(404).body(BufferedBody::from_bytes(b"")).unwrap()), Status::Reject);
-                }
-            }
-        }
-
-        // If any of the headers in service.configuration.unauthorized_when_header_missing are missing, return 401
-        if service.configuration.unauthorized_when_header_missing.len() > 0 {
-            let lowercase_path = request.uri().path().to_lowercase();
-            // Hack for nuget caching purpose, need to be made generic via rules system
-            if lowercase_path.contains("packages/nuget/metadata") || lowercase_path.contains("packages/nuget/download") {
-                for header in &service.configuration.unauthorized_when_header_missing {
-                    if request.headers().get(header).is_none() {
-                        let mut response = Response::builder().status(401).body(BufferedBody::from_bytes(b"")).unwrap();
-                        response.headers_mut().insert("www-authenticate", "Basic realm=\"GitLab Packages Registry\"".parse().unwrap());
-                        return (Ok(response), Status::Reject);
-                    }
-                }
-            }
-        }
-
-        let key_factory = |request: &Request<BufferedBody>| {
-            // Hash request content
-            let mut hasher = GxHasher::with_seed(123);
-            let mut log_hashed_obj = Vec::new();
-
-            if log_enabled!(Debug) {
-                trace.lock().unwrap().push_str("\nHash: (");
-            }
-
-            // Different path/query means different key
-            if service.configuration.hash_path {
-                if log_enabled!(Debug) {
-                    log_hashed_obj.push("path");
-                }
-                request.uri().path().hash(&mut hasher);
-            }
-            if service.configuration.hash_query {
-                if let Some(query) = request.uri().query() {
-                    if log_enabled!(Debug) {
-                        log_hashed_obj.push("query");
-                    }
-                    query.hash(&mut hasher);
-                }
-            }
-            // Sometimes, we can't rely on the request body.
-            // For example, protobuf maps are serialized in a non-deterministic order.
-            // https://gist.github.com/kchristidis/39c8b310fd9da43d515c4394c3cd9510
-            // In this case, the caller may define a hash header to not use the body for the key.
-            match request.headers().get("x-request-id") {
-                // If the request has a request id header, use it as the key
-                Some(value) => {
-                    if log_enabled!(Debug) {
-                        trace.lock().unwrap().push_str("x-request-id + ");
-                    }
-                    value.as_bytes().hash(&mut hasher);
-                },
-                // Otherwise hash the request body
-                None => {
-                    if service.configuration.hash_body {
-                        if log_enabled!(Debug) {
-                            log_hashed_obj.push("body");
-                        }
-                        request.body().hash(&mut hasher);
-                    }
-                }
-            }
-            let hash = hasher.finish_u128();
-
-            if log_enabled!(Debug) {
-                trace.lock().unwrap().push_str(&format!("{}): {:x}", log_hashed_obj.join(" + "), hash));
-            }
-
-            return hash;
-        };
-
-        let status: Arc<tokio::sync::Mutex<Status>> = Arc::new(tokio::sync::Mutex::new(Status::Hit));
-
-        let value_factory = |request: Request<BufferedBody>| async {
-
-            trace!("Cache miss");
-            let mut status = status.lock().await;
-            *status = Status::Miss;
-
-            let target_host = match request.headers().get("x-target-host") {
-                Some(value) => value.to_str().unwrap().to_string(),
-                None => service.configuration.default_target_host.clone(),
-            };
-
-            if target_host.is_empty() {
-                panic!("Missing X-Target-Host header! Can't forward the request.");
-            }
-
-            let target_uri = Uri::builder()
-                .scheme("https")
-                .authority(target_host.clone())
-                .path_and_query(request.uri().path_and_query().unwrap().clone())
-                .build()
-                .expect("Failed to build target URI");
-
-            if log_enabled!(Debug) {
-                trace.lock().unwrap().push_str(&format!("\nCache miss! Forwarding request to: {}", target_uri));
-            }
-
-            // Copy path and query
-            let mut forwarded_req = Request::builder()
-                .method(request.method())
-                .uri(target_uri)
-                .version(request.version());
-
-            // Copy headers
-            let headers = forwarded_req.headers_mut().expect("Failed to get headers");
-            // Add host header
-            headers.extend(request.headers().iter().map(|(k, v)| (k.clone(), v.clone())));
-            headers.insert("host", target_host.parse().unwrap());
-            // Remove accept-encoding header, as we don't want to handle compressed responses
-            headers.remove("accept-encoding");
-
-            if log_enabled!(Debug) {
-                let mut trace = trace.lock().unwrap();
-                trace.push_str("\nForwarded headers:");
-                for (k, v) in headers.iter() {
-                    trace.push_str(&format!("\n - {}: {}", k, v.to_str().unwrap()));
-                }
-            }
-
-            let body = request.into_body();
-
-            trace!("Buffering request...");
-
-            // Copy body
-            let forwarded_req = forwarded_req.body(body).expect("Failed building request");
-
-            trace!("Forwarding request");
-
-            // Await the response...
-            let response: Response<Incoming> = service
-                .client
-                .request(forwarded_req)
-                .await
-                .expect("Failed to send request");
-
-            // Buffer response body so that we can cache it and return it
-            let (mut parts, body) = response.into_parts();
-            let mut buffered_response_body = BufferedBody::collect_buffered(body).await.unwrap();
-
-            // Replace strings in response, but only if content type is utf8 text
-            if let Some(content_type) = parts.headers.get("content-type") {
-                if content_type.to_str().unwrap().contains("json") {
-                    let content_length = buffered_response_body.replace_strings(&service.configuration.response_replacement_strings);
-                    // Response length may have changed, so we need to update the content-length header
-                    parts.headers.insert("content-length", content_length.to_string().parse().unwrap());
-                }
-            }
-
-            let status = parts.status;
-            
-            if log_enabled!(Debug) {
-                let mut trace = trace.lock().unwrap();
-                trace.push_str(&format!("\nReceived response status {} and headers:", status));
-                for (k, v) in parts.headers.iter() {
-                    trace.push_str(&format!("\n - {}: {}", k, v.to_str().unwrap()));
-                }
-            }
-
-            let cache_response: bool = match status.as_u16() {
-                100..=399 => true,
-                _ => false,
-            };
-
-            Ok((Response::from_parts(parts, buffered_response_body), cache_response))
-        };
-
+        // Request buffering
         let (parts, body) = request.into_parts();
         let buffered_body = BufferedBody::collect_buffered(body).await.unwrap();
-        let request = Request::from_parts(parts, buffered_body);
+        let mut buffered_request = Request::from_parts(parts, buffered_body);
 
-        let cache = {
-            if service.configuration.bypass_path_containing.len() > 0 {
-                let lowercase_path = request.uri().path().to_lowercase();
-                if service.configuration.bypass_path_containing
-                    .iter()
-                    .any(|path| lowercase_path.contains(path))
-                {
-                    let mut status = status.lock().await;
-                    *status = Status::HitShort;
-                    &service.short_cache
-                } else {
-                    &service.cache
-                }
-            } else {
-                &service.cache
+        let mut response: Option<(Arc<Response<BufferedBody>>, Status)> = None;
+        let mut i = 0;
+
+        // Evaluate middlewares until one returns a response
+        for middleware in &service.configuration.middlewares {
+            i += 1;
+            if let Some(r) = middleware.on_request(service.clone(), &mut buffered_request).await {
+                response = Some(r);
+                break; // On the first middleware that returns a response, we stop processing
             }
-        };
-
-        let result: Result<Arc<Response<BufferedBody>>, hyper::Error> = cache
-            .get_or_add_from_item2(request, key_factory, value_factory)
-            .await;
-
-        let status: Status = status.lock().await.clone();
-
-        // Log trace
-        if log_enabled!(Debug) {
-            let mut trace = trace.lock().unwrap();
-            trace.push_str(format!("\nStatus: {}", status).as_str());
-            debug!("Debug trace: {}", trace);
         }
 
-        match result {
-            Ok(response) => {
-                let response = response.as_ref();
-                let response: Response<BufferedBody> = response.clone();
-                trace!("Received response from target with status: {:?}", response);
-                (Ok(response), status)
-            }
-            Err(e) => (Err(e), status),
+        if response.is_none() {
+            return (Err(CacheusError { message: "No response generated by middlewares".to_string() }), Status::Ignore);
         }
+
+        let response = response.unwrap();
+        let status = response.1;
+        let mut response = response.0.deref().clone();
+
+        // In reverse order, apply middlewares on the response, starting from the one that produced the response
+        for j in (0..i).rev() {
+            service.configuration.middlewares[j].on_response(service.clone(), &buffered_request, &mut response).await;
+        }
+
+        return (Ok(response), status);
     }
 }
+
+struct CacheusError
+{
+    message: String,
+}
+
+impl std::fmt::Debug for CacheusError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "CacheusError: {}", self.message)
+    }
+}
+
+impl Display for CacheusError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "CacheusError: {}", self.message)
+    }
+}
+
+impl StdError for CacheusError {}
+unsafe impl Send for CacheusError {}
+unsafe impl Sync for CacheusError {}

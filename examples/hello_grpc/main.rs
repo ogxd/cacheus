@@ -62,7 +62,7 @@ async fn main()
 {
     let server = TestServer::new_grpc();
 
-    CacheusServer::start_from_config_file("benches/qps/config.yaml").await;
+    CacheusServer::start_from_config_file("examples/hello_grpc/config.yaml").await;
 
     server.shutdown().await;
 }

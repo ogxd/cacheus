@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use super::lru::ExpirationType;
-use crate::{Cache, LruCache};
+use crate::{caches::Cache, LruCache};
 
 #[allow(dead_code)]
 pub struct ProbatoryCache<K, V>
@@ -10,16 +10,14 @@ pub struct ProbatoryCache<K, V>
     resident: LruCache<K, V>,
 }
 
-impl<K, V> Cache<K, V> for ProbatoryCache<K, V>
-where
-    K: Eq + std::hash::Hash + Clone,
+impl<K: Eq + std::hash::Hash + Clone, V> Cache<K, V> for ProbatoryCache<K, V>
 {
     fn len(&self) -> usize
     {
         self.resident.len()
     }
 
-    fn try_add_arc(&mut self, key: K, value: Arc<V>) -> bool {
+    fn try_add(&mut self, key: K, value: V) -> bool {
         // Try to add to probatory cache first (if it exists)
         let is_new_to_probatory = self.probatory
             .as_mut()
@@ -30,7 +28,7 @@ where
         }
 
         // If not new to probatory or probatory doesn't exist, try resident cache
-        self.resident.try_add_arc(key, value)
+        self.resident.try_add(key, value)
     }
 
     fn try_get(&mut self, key: &K) -> Option<Arc<V>>
@@ -56,12 +54,14 @@ where
 #[cfg(test)]
 mod tests
 {
+    use crate::CacheEnum;
+
     use super::*;
 
     #[test]
     fn basic()
     {
-        let mut lru = ProbatoryCache::new(40, 4, Duration::MAX, ExpirationType::Absolute);
+        let mut lru = CacheEnum::Probatory(ProbatoryCache::new(40, 4, Duration::MAX, ExpirationType::Absolute));
         assert!(lru.try_get(&1).is_none());
         assert!(lru.try_add(1, "hello"));
         assert!(lru.try_get(&1).is_none(), "Key should only be in the probatory cache");
@@ -73,7 +73,7 @@ mod tests
     #[test]
     fn trimming()
     {
-        let mut lru = ProbatoryCache::new(40, 4, Duration::MAX, ExpirationType::Absolute);
+        let mut lru = CacheEnum::Probatory(ProbatoryCache::new(40, 4, Duration::MAX, ExpirationType::Absolute));
         // Add every entry twice for them to enter the resident cache
         assert!(lru.try_add(1, "h"));
         assert!(lru.try_add(1, "h"));

@@ -3,7 +3,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::{ArenaLinkedList, Cache};
+use crate::caches::Cache;
+use crate::ArenaLinkedList;
 
 #[allow(dead_code)]
 pub struct LruCache<K, V>
@@ -29,16 +30,14 @@ struct LruCacheEntry<V>
     value: Arc<V>,
 }
 
-impl<K, V> Cache<K, V> for LruCache<K, V>
-where
-    K: Eq + std::hash::Hash + Clone,
+impl<K: Eq + std::hash::Hash + Clone, V> Cache<K, V> for LruCache<K, V>
 {
     fn len(&self) -> usize
     {
         self.map.len()
     }
 
-    fn try_add_arc(&mut self, key: K, value: Arc<V>) -> bool
+    fn try_add(&mut self, key: K, value: V) -> bool
     {
         let mut added = false;
 
@@ -47,7 +46,7 @@ where
             LruCacheEntry {
                 node_index: self.lru_list.add_last(k.clone()).expect("Failed to add node to list"),
                 insertion: Instant::now(),
-                value: value,
+                value: Arc::new(value),
             }
         });
 
@@ -144,12 +143,14 @@ where
 #[cfg(test)]
 mod tests
 {
+    use crate::CacheEnum;
+
     use super::*;
 
     #[test]
     fn basic()
     {
-        let mut lru = LruCache::new(4, Duration::MAX, ExpirationType::Absolute);
+        let mut lru: CacheEnum<u32, &str> = CacheEnum::Lru(LruCache::new(4, Duration::MAX, ExpirationType::Absolute));
         assert!(lru.try_get(&1).is_none());
         assert!(lru.try_add(1, "hello"));
         assert!(!lru.try_add(1, "hello"));
@@ -159,7 +160,7 @@ mod tests
     #[test]
     fn trimming()
     {
-        let mut lru = LruCache::new(4, Duration::MAX, ExpirationType::Absolute);
+        let mut lru = CacheEnum::Lru(LruCache::new(4, Duration::MAX, ExpirationType::Absolute));
         assert!(lru.try_add(1, "h"));
         assert!(lru.try_add(2, "e"));
         assert!(lru.try_add(3, "l"));
@@ -176,7 +177,7 @@ mod tests
     #[test]
     fn reordering()
     {
-        let mut lru = LruCache::new(4, Duration::MAX, ExpirationType::Absolute);
+        let mut lru = CacheEnum::Lru(LruCache::new(4, Duration::MAX, ExpirationType::Absolute));
         assert!(lru.try_add(1, "h"));
         assert!(lru.try_add(2, "e"));
         assert!(lru.try_add(3, "l"));

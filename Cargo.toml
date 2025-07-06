@@ -18,12 +18,16 @@ path = "tests/tests.rs"
 name = "arena_linked_list"
 harness = false
 
-[[bench]]
-name = "qps"
+[[example]]
+name = "hello"
 harness = false
 
-[[bench]]
-name = "qps_http"
+[[example]]
+name = "download"
+harness = false
+
+[[example]]
+name = "hello_grpc"
 harness = false
 
 [[example]]
@@ -47,6 +51,8 @@ hyper-util = { version = "0.1", features = ["full"] }
 pin-project-lite = "0.2.14"
 futures-core = "0.3.30"
 prometheus = "0.13"
+serde-inline-default = "0.2.3"
+enum_dispatch = "0.3.13"
 
 [dev-dependencies]
 tonic = "0.11"

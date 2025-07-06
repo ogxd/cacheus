@@ -1,17 +1,57 @@
-minimum_log_level: debug
-default_target_host: "www.nuget.org"
-cache_probatory_size: 0
-cache_resident_size: 10000
+---
 listening_port: 4002
 prometheus_port: 4004
 https: true
 http2: false
-hash_body: false
-response_replacement_strings:
-  "nuget": "pouetsuperlongsupersuperlongpouet"
-unauthorized_when_header_missing:
-  - "authorization"
-exclude_path_containing:
-  - "test."
-bypass_path_containing:
-  - "/index.json"
+minimum_log_level: 'debug'
+
+middlewares:
+  - add_response_header:
+      name: 'WWW-Authenticate'
+      value: 'Basic realm="GitLab Packages Registry"'
+      when:
+        status_code_is: 401
+  - block_request:
+      status_code: 401
+      when:
+        header_exists: 'authorization'
+  - block_request:
+      status_code: 404
+      when:
+        any:
+          - path_contains: '*metadata/microsoft.*'
+          - path_contains: '*metadata/system.*'
+          - path_contains: '*metadata/grpc.*'
+          - path_contains: '*metadata/xunit.*'
+  - add_response_header:
+      name: 'X-Cache-Status'
+      value: '$cache_status'
+  - use_cache:
+      cache_name: 'metadata'
+      when:
+        path_contains: '*/packages/nuget/metadata/*'
+  - use_cache:
+      cache_name: 'packages'
+      when:
+        path_contains: '*/packages/nuget/download/*'
+  - replace_response_body:
+      find: 'https://gitlab.com'
+      replacement: 'http://nuget-cache.prod-euw1.euw1.eqtv.io'
+      when:
+        path_contains: '*/index.json'
+  - forward_request:
+      target_host: 'www.nuget.org'
+
+caches:
+  - in_memory:
+      name: 'packages'
+      ttl_seconds: 86400
+      hash_path: true
+      hash_query: true
+      hash_body: false
+  - in_memory:
+      name: 'metadata'
+      ttl_seconds: 90
+      hash_path: true
+      hash_query: true
+      hash_body: false

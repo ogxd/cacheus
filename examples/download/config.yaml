@@ -1,0 +1,23 @@
+listening_port: 3001
+prometheus_port: 8081
+https: false
+http2: false
+minimum_log_level: debug
+
+middlewares:
+  - block_request:
+      when:
+        not:
+          path_contains: '*download'
+  - use_cache:
+      cache_name: files
+  - forward_request:
+      target_host: google.com
+
+caches:
+  - in_memory:
+      name: files
+      ttl_seconds: 60
+      hash_path: true
+      hash_query: true
+      hash_body: false

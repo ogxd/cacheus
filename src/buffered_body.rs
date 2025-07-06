@@ -58,17 +58,11 @@ pub struct BufferedBody
 
 impl BufferedBody
 {
-    pub fn replace_strings(&mut self, map: &HashMap<String, String>) -> usize
+    pub fn replace_strings(&mut self, find: &String, replacement: &String) -> usize
     {
-        if map.len() == 0 {
-            return self.bufs.len();
-        }
-
         let mut body_utf8: String = String::from_utf8(self.bufs.to_vec() /* we could avoid a copy here */).unwrap();
 
-        for (key, value) in map {
-            body_utf8 = body_utf8.replace(key, &value);
-        }
+        body_utf8 = body_utf8.replace(find, replacement);
 
         self.bufs = BytesMut::from(body_utf8.as_bytes());
 
