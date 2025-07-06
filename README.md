@@ -1,5 +1,9 @@
 # Cacheus
 
+```
+⚠️ This is a work in progress. The API and features are subject to change.
+```
+
 Cacheus is a blazingly fast and ultra-efficient multi-protocol read-through caching proxy. Placed in front of backend services, Cacheus will cache responses and dramatically reduce the load, without involving any changes on the client side, unlike other caching solutions.
 - **Multi-protocol**: Cacheus has no API. It simply supports HTTP/1.1 and HTTP/2, including everything based on (such as unary gRPC). Just point your client to Cacheus, and it will take care of the rest.
 - **Content-agnostic**: Cacheus does not care about the content of the responses, it will cache anything. Whether it's JSON, XML, HTML, or even binary data like protobuf encoded messages, Cacheus will cache it.
@@ -8,30 +12,45 @@ Cacheus is a blazingly fast and ultra-efficient multi-protocol read-through cach
 
 ## Usage
 
+Here is an example configuration file for Cacheus:
+```yaml
+listening_port: 3001
+prometheus_port: 8081
+https: false
+http2: false
+minimum_log_level: info
+
+# Middlewares are applied in the order they are defined.
+middlewares:
+  - block_request:
+      # Every middleware can have conditions.
+      # If conditions are met, the middleware will apply its logic, otherwise it will just hand the request to the next middleware.
+      when: 
+        not:
+          path_contains: '*download'
+  - use_cache:
+      # Will lookup in the cache and return it when cache hit.
+      # Will store the response in the cache when cache miss.
+      cache_name: files
+  - forward_request:
+      # Finally forward the request to the target service.
+      # Happens unless the request was blocked or cached in a previous middleware.
+      target_host: google.com
+
+# We can define multiple caches and of different types.
+caches:
+  - in_memory:
+      name: files
+      ttl_seconds: 60
+      hash_path: true
+      hash_query: true
+      hash_body: false
+```
+
 Call google.com through Cacheus:
 ```bash
 # todo
 ```
-
-### WIP - How to tell Cacheus which service to reach
-
-How to handle faulty services? Cacheus is not meant to be a load balance or a service discovery tool. It must take forward the requests as-is. 
-
-#### Pass host as path
-It looks weird but it shouldn't imply any change on the client side. Host url is usually just a configuration parameter.  
-Might not work however with most gRPC clients, as we only pass the host and no path.
-```bash
-curl http://localhost:8080/google.com?hello`
-```
-
-#### Pass host as header
-It involves a (small) change on the client side, but it's the most flexible solution.
-```bash
-curl --header "X-TargetHost: google.com?hello" http://localhost:8080`
-```
-
-#### Pass host as config
-Issue is that it cannot change dynamically
 
 ## Todo
 
@@ -54,4 +73,8 @@ Issue is that it cannot change dynamically
 - [x] Find out how Cacheus will know service to reach
 - [x] Find out how to configure service
 - [ ] Experiment with bytedance/monoio
+- [x] Modular configuration based on middlewares
+- [ ] Sequence diagram generation from configuration
+- [ ] Dynamic configuration reloading
+- [ ] Benchmark against nginx, traefik, envoy, etc.
 
