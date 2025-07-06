@@ -8,7 +8,7 @@ middlewares:
   - block_request:
       when:
         not:
-          path_contains: 'download'
+          path_contains: '*download'
   - use_cache:
       cache_name: files
   - forward_request:

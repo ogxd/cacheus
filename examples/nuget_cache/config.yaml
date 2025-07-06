@@ -4,113 +4,54 @@ prometheus_port: 4004
 https: true
 http2: false
 minimum_log_level: 'debug'
-default_target_host: 'www.nuget.org'
 
-# v?
-rules:
-  - if:
-      not:
-        header_exists: 'authorization'
-    then:
-      - block_request:
-          status_code: 401
-      - add_response_header:
-          name: 'WWW-Authenticate'
-          value: 'Basic realm="GitLab Packages Registry"'
-  - if:
-      any:
-        - path_contains: '*metadata/microsoft.*'
-        - path_contains: '*metadata/system.*'
-        - path_contains: '*metadata/grpc.*'
-        - path_contains: '*metadata/xunit.*'
-    then:
-      - block_request:
-          status_code: 404
-  - if:
-      path_contains: '*/index.json'
-    then:
-      - body_replace:
-          find: 'https://gitlab.com'
-          replacement: 'http://nuget-cache.prod-euw1.euw1.eqtv.io'
-
-# toujours la meme merde: comment distinger le fait qu'on ai une reponse ou pas ? balek ?
-
-# v3?
-# single point of decision: use cached response or forward and respond or return status xxx ?
-
-# v2
-on_request:
-  - block_request:
-      status_code: 401
-      when:
-        not:
-          header_exists: 'authorization'
-
-on_response:
+middlewares:
   - add_response_header:
       name: 'WWW-Authenticate'
       value: 'Basic realm="GitLab Packages Registry"'
       when:
-        not:
-          header_exists: 'authorization' # repetition, pas ouf
-
-# v1
-rules:
-  - name: 'Reject unauthorized requests'
-    when:
-      - header_exists: 'authorization'
-    do:
-      - block:
-          status_code: 401
-      - add_response_header:
-          name: 'WWW-Authenticate'
-          value: 'Basic realm="GitLab Packages Registry"'
-  - name: 'Reject requests for public packages'
-    when:
-      - any:
+        status_code_is: 401
+  - block_request:
+      status_code: 401
+      when:
+        header_exists: 'authorization'
+  - block_request:
+      status_code: 404
+      when:
+        any:
           - path_contains: '*metadata/microsoft.*'
           - path_contains: '*metadata/system.*'
           - path_contains: '*metadata/grpc.*'
           - path_contains: '*metadata/xunit.*'
-    do:
-      - block:
-          status_code: 404
-  - name: 'Replace nuget endpoints'
-    when:
-      - path_contains: '*/index.json'
-    do:
-      - body_replace:
-          find: 'https://gitlab.com'
-          replacement: 'http://nuget-cache.prod-euw1.euw1.eqtv.io'
-      - forward_request:
-          target_host: 'www.nuget.org'
-  - name: 'Cache metadata'
-    when:
-      - all:
-          - path_contains: '*/packages/nuget/metadata/*'
-          - status_code:
-              value: 200
-    do:
-      - use_cache: 'metadata'
-  - name: 'Cache packages'
-    when:
-      - all:
-          - path_contains: '*/packages/nuget/download/*'
-          - status_code:
-              value: 200
-    do:
-      - use_cache: 'packages'
+  - add_response_header:
+      name: 'X-Cache-Status'
+      value: '$cache_status'
+  - use_cache:
+      cache_name: 'metadata'
+      when:
+        path_contains: '*/packages/nuget/metadata/*'
+  - use_cache:
+      cache_name: 'packages'
+      when:
+        path_contains: '*/packages/nuget/download/*'
+  - replace_response_body:
+      find: 'https://gitlab.com'
+      replacement: 'http://nuget-cache.prod-euw1.euw1.eqtv.io'
+      when:
+        path_contains: '*/index.json'
+  - forward_request:
+      target_host: 'www.nuget.org'
 
 caches:
   - in_memory:
       name: 'packages'
-      probatory_size: 0
-      resident_size: 1000
-      cache_ttl_seconds: 86400
+      ttl_seconds: 86400
+      hash_path: true
+      hash_query: true
       hash_body: false
   - in_memory:
       name: 'metadata'
-      probatory_size: 0
-      resident_size: 1000
-      cache_ttl_seconds: 90
+      ttl_seconds: 90
+      hash_path: true
+      hash_query: true
       hash_body: false
