@@ -1,0 +1,21 @@
+version: "3.9"
+
+services:
+  proxy:
+    image: ghcr.io/ogxd/cacheus:latest
+    container_name: proxy
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./proxy.yml:/etc/cacheus.yml:ro
+    restart: unless-stopped
+    cpus: "2.0"
+
+  hello:
+    image: hashicorp/http-echo
+    container_name: hello
+    command: "-text='Hello World'"
+    ports:
+      - "8081:5678"
+    restart: unless-stopped
+    cpus: "4.0"

@@ -1,0 +1,19 @@
+listening_port: 8080
+prometheus_port: 5000
+https: false
+http2: false
+minimum_log_level: warning
+
+middlewares:
+  - use_cache:
+      cache_name: files
+  - forward_request:
+      target_host: localhost:8081
+
+caches:
+  - in_memory:
+      name: cache
+      ttl_seconds: 60
+      hash_path: true
+      hash_query: true
+      hash_body: false
