@@ -1,0 +1,20 @@
+version: "3.9"
+name: haproxy-bench
+
+services:
+  proxy:
+    image: haproxy:latest
+    container_name: haproxy-proxy
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    restart: unless-stopped
+    cpus: 2
+
+  hello:
+    image: hashicorp/http-echo
+    container_name: hello
+    command: "-text='Hello World'"
+    restart: unless-stopped
+    cpus: 1
