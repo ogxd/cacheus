@@ -4,7 +4,7 @@ export const options = {
   discardResponseBodies: true,
   cloud: {
     projectID: 4565599,
-    name: 'Nginx to Hello World',
+    name: 'Cacheus to Hello World',
   },
   scenarios: {
     contacts: {
@@ -14,7 +14,7 @@ export const options = {
       // Start `startRate` iterations per minute
       timeUnit: '1s',
       // Pre-allocate necessary VUs.
-      preAllocatedVUs: 100,
+      preAllocatedVUs: 10000,
       stages: [
         { target: 20000, duration: '5m' },
       ],

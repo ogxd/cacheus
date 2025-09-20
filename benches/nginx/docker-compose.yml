@@ -1,14 +1,14 @@
 version: "3.9"
-name: baseline-bench
+name: nginx-bench
 
 services:
   proxy:
-    image: ghcr.io/ogxd/cacheus:latest
-    container_name: cacheus-proxy
+    image: nginx:latest
+    container_name: nginx-proxy
     ports:
       - "8080:8080"
     volumes:
-      - ./proxy.yml:/etc/cacheus.yml:ro
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
     restart: unless-stopped
     cpus: 2
 

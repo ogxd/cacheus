@@ -2,13 +2,13 @@ listening_port: 8080
 prometheus_port: 5000
 https: false
 http2: false
-minimum_log_level: warning
+minimum_log_level: warn
 
 middlewares:
   - use_cache:
-      cache_name: files
+      cache_name: cache
   - forward_request:
-      target_host: localhost:8081
+      target_host: hello:5678
 
 caches:
   - in_memory:
