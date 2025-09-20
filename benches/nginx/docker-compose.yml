@@ -1,0 +1,20 @@
+version: "3.9"
+name: nginx-bench
+
+services:
+  proxy:
+    image: nginx:latest
+    container_name: nginx-proxy
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    restart: unless-stopped
+    cpus: 2
+
+  hello:
+    image: hashicorp/http-echo
+    container_name: hello
+    command: "-text='Hello World'"
+    restart: unless-stopped
+    cpus: 1 # Does not need much since it's supposed to be cached anyway
