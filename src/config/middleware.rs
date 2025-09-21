@@ -14,10 +14,11 @@ trait Middleware {
 #[serde(untagged)]
 pub enum MiddlewareEnum {
     Block { block_request: Block },
-    Cache { use_cache: Cache },
-    Forward { forward_request: Forward },
-    AddHeader { add_response_header: AddHeader },
+    Cache { use_cache: Cache }, // TODO: Support HTTP cache headers, validation, etc.
+    Forward { forward_request: Forward }, // TODO: Support multiple targets, DNS load balancing, redirects, etc.
+    AddHeader { add_response_header: AddHeader }, // TODO: If before forward: add request header, else add response header? Or separate types?
     ReplaceResponseBody { replace_response_body: ReplaceResponseBody },
+    // TODO: RateLimit, Compress, 
 }
 
 impl MiddlewareEnum {
