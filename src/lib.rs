@@ -77,14 +77,10 @@ impl CacheusServer
 
         info!("Starting Cacheus server...");
 
-        let connector = match configuration.https {
-            true => HttpsConnector::new(),
-            false => {
-                let mut http = HttpConnector::new();
-                http.set_nodelay(true);
-                HttpsConnector::new_with_connector(http)
-            },
-        };
+        let mut http = HttpConnector::new();
+        http.set_nodelay(true);
+        http.enforce_http(false);
+        let connector = HttpsConnector::new_with_connector(http);
 
         let mut caches = HashMap::new();
 
@@ -195,6 +191,11 @@ impl CacheusServer
             }
         };
 
+        // Log created middlewares
+        for middleware in &server.configuration.middlewares {
+            info!("Loaded middleware: {:?}", middleware);
+        }
+
         join!(service, prometheus, healthcheck);
 
         Ok(())
@@ -240,6 +241,10 @@ impl CacheusServer
 
     async fn call_internal_async(service: Arc<CacheusServer>, request: Request<Incoming>,) -> (Result<Response<BufferedBody>, CacheusError>, Status)
     {
+        let mut context = CallContext {
+            variables: HashMap::new(),
+        };
+        
         // Request buffering
         let (parts, body) = request.into_parts();
         let buffered_body = BufferedBody::collect_buffered(body).await.unwrap();
@@ -251,7 +256,7 @@ impl CacheusServer
         // Evaluate middlewares until one returns a response
         for middleware in &service.configuration.middlewares {
             i += 1;
-            if let Some(r) = middleware.on_request(service.clone(), &mut buffered_request).await {
+            if let Some(r) = middleware.on_request(&mut context, service.clone(), &mut buffered_request).await {
                 response = Some(r);
                 break; // On the first middleware that returns a response, we stop processing
             }
@@ -267,11 +272,15 @@ impl CacheusServer
 
         // In reverse order, apply middlewares on the response, starting from the one that produced the response
         for j in (0..i).rev() {
-            service.configuration.middlewares[j].on_response(service.clone(), &buffered_request, &mut response).await;
+            service.configuration.middlewares[j].on_response(&mut context, service.clone(), &buffered_request, &mut response).await;
         }
 
         return (Ok(response), status);
     }
+}
+
+pub struct CallContext {
+    variables: HashMap<String, String>,
 }
 
 struct CacheusError
