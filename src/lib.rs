@@ -2,7 +2,7 @@
 extern crate log;
 
 mod buffered_body;
-mod caches;
+// mod caches;
 mod collections;
 // pub mod config;
 pub mod config;
@@ -18,7 +18,7 @@ use std::ops::Deref;
 use std::str::FromStr;
 use std::sync::Arc;
 
-pub use caches::*;
+// pub use caches::*;
 pub use collections::*;
 pub use config::{Configuration, MiddlewareEnum};
 use buffered_body::BufferedBody;
@@ -38,12 +38,13 @@ use metrics::Metrics;
 use simplelog::{ColorChoice, CombinedLogger, Config, TermLogger, TerminalMode};
 use status::Status;
 use tokio::net::TcpListener;
+use foyer::{Cache, CacheBuilder};
 use crate::config::CacheConfig;
 
 pub struct CacheusServer
 {
     configuration: Configuration,
-    caches: HashMap<String, (CacheConfig, ShardedCache<u128, Response<BufferedBody>>)>,
+    caches: HashMap<String, (CacheConfig, Cache<u128, Response<BufferedBody>>)>,
     metrics: Metrics,
     client: Client<HttpsConnector<HttpConnector>, BufferedBody>,
 }

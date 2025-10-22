@@ -5,7 +5,8 @@ use gxhash::GxHasher;
 use serde::{Serialize, Deserialize};
 use serde_inline_default::serde_inline_default;
 use crate::buffered_body::BufferedBody;
-use crate::{lru, ShardedCache};
+// use crate::{lru, ShardedCache};
+use foyer::{*};
 use hyper::{Request, Response};
 
 /// Cache configuration types
@@ -69,18 +70,64 @@ impl CacheConfig {
     }
 
     /// Add cache to the provided cache map
-    pub fn add_cache(&self, caches: &mut HashMap<String, (CacheConfig, ShardedCache<u128, Response<BufferedBody>>)>) {
-        match self {
-            CacheConfig::InMemory { in_memory } => {
-                let cache = ShardedCache::<u128, Response<BufferedBody>>::new(
-                    in_memory.shards,
-                    in_memory.probatory_size,
-                    in_memory.resident_size,
-                    Duration::from_secs(in_memory.ttl_seconds),
-                    lru::ExpirationType::Absolute,
-                );
-                caches.insert(in_memory.name.clone(), (self.clone(), cache));
+    pub fn add_cache(&self, caches: &mut HashMap<String, (CacheConfig, Cache<u128, Response<BufferedBody>>)>) {
+    let hybrid: HybridCache<u64, String> = HybridCacheBuilder::new()
+        .with_name("my-hybrid-cache")
+        .with_policy(HybridCachePolicy::WriteOnEviction)
+        .memory(1024)
+        .with_shards(4)
+        .with_eviction_config(LruConfig {
+            high_priority_pool_ratio: 0.1,
+        })
+        .with_hash_builder(BuildHasherDefault::default())
+        .with_weighter(|_key, value: &String| value.len())
+        .with_filter(|a, x| true)
+        .storage()
+        .with_io_engine(io_engine)
+        .with_engine_config(
+            BlockEngineBuilder::new(device)
+                .with_block_size(16 * 1024 * 1024)
+                .with_indexer_shards(64)
+                .with_recover_concurrency(8)
+                .with_flushers(2)
+                .with_reclaimers(2)
+                .with_buffer_pool_size(256 * 1024 * 1024)
+                .with_clean_block_threshold(4)
+                .with_eviction_pickers(vec![Box::<FifoPicker>::default()])
+                .with_admission_filter(StorageFilter::new())
+                .with_reinsertion_filter(StorageFilter::new().with_condition(RejectAll))
+                .with_tombstone_log(false),
+        )
+        .with_recover_mode(RecoverMode::Quiet)
+        .with_compression(foyer::Compression::Lz4)
+        .with_runtime_options(RuntimeOptions::Separated {
+            read_runtime_options: TokioRuntimeOptions {
+                worker_threads: 4,
+                max_blocking_threads: 8,
             },
-        }
+            write_runtime_options: TokioRuntimeOptions {
+                worker_threads: 4,
+                max_blocking_threads: 8,
+            },
+        })
+        .build();
+
+
+        // match self {
+        //     CacheConfig::InMemory { in_memory } => {
+        //         let cache = CacheBuilder::new(100)
+        //             .with_shards(in_memory.shards)
+        //             .with_eviction_config(LruConfig {
+        //     high_priority_pool_ratio: 0.1,
+        // })
+        //             in_memory.shards,
+        //             in_memory.probatory_size,
+        //             in_memory.resident_size,
+        //             Duration::from_secs(in_memory.ttl_seconds),
+        //             lru::ExpirationType::Absolute,
+        //         );
+        //         caches.insert(in_memory.name.clone(), (self.clone(), cache));
+        //     },
+        // }
     }
 }
