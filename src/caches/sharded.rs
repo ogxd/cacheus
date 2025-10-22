@@ -1,6 +1,8 @@
-use std::hash::{DefaultHasher, Hasher};
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+use serde::Serialize;
 
 use super::lru::ExpirationType;
 use crate::caches::Cache;
@@ -9,12 +11,13 @@ use crate::{CacheEnum, LruCache, ProbatoryCache};
 #[allow(dead_code)]
 pub struct ShardedCache<K, V>
 where
-    K: Eq + std::hash::Hash + Clone,
+    K: Eq + Hash + Serialize + Clone,
+    V: Serialize,
 {
     shards: Vec<Arc<Mutex<CacheEnum<K, V>>>>,
 }
 
-impl<K: Eq + std::hash::Hash + Clone, V> Cache<K, V> for ShardedCache<K, V>
+impl<K: Eq + Hash + Serialize + Clone, V: Serialize> Cache<K, V> for ShardedCache<K, V>
 {
     fn len(&self) -> usize
     {
@@ -33,7 +36,7 @@ impl<K: Eq + std::hash::Hash + Clone, V> Cache<K, V> for ShardedCache<K, V>
 }
 
 #[allow(dead_code)]
-impl<K, V> ShardedCache<K, V>
+impl<K: Eq + Hash + Serialize + Clone, V: Serialize> ShardedCache<K, V>
 where
     K: Eq + std::hash::Hash + Clone,
 {

@@ -9,6 +9,8 @@ use futures::Future;
 use hyper::body::{Body, Frame};
 use hyper::HeaderMap;
 use pin_project_lite::pin_project;
+use serde::ser::SerializeStruct;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 pin_project! {
     /// Future that resolves into a [`Collected`].
@@ -54,6 +56,55 @@ pub struct BufferedBody
 {
     bufs: BytesMut,
     trailers: Option<HeaderMap>,
+}
+
+impl Serialize for BufferedBody {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut s = serializer.serialize_struct("BufferedBody", 2)?;
+        s.serialize_field("bufs", &self.bufs.to_vec())?;
+        if let Some(trailers) = &self.trailers {
+            // convert HeaderMap → HashMap<String, String>
+            let map: HashMap<String, String> = trailers
+                .iter()
+                .map(|(k, v)| (k.as_str().to_string(), v.to_str().unwrap_or_default().to_string()))
+                .collect();
+            s.serialize_field("trailers", &Some(map))?;
+        } else {
+            s.serialize_field("trailers", &Option::<HashMap<String, String>>::None)?;
+        }
+        s.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for BufferedBody {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Helper {
+            bufs: Vec<u8>,
+            trailers: Option<HashMap<String, String>>,
+        }
+
+        let h = Helper::deserialize(deserializer)?;
+        let mut header_map = None;
+        if let Some(t) = h.trailers {
+            let mut map = HeaderMap::new();
+            for (k, v) in t {
+                map.insert(k.parse::<hyper::header::HeaderName>().unwrap(), v.parse::<hyper::header::HeaderValue>().unwrap());
+            }
+            header_map = Some(map);
+        }
+
+        Ok(BufferedBody {
+            bufs: BytesMut::from(&h.bufs[..]),
+            trailers: header_map,
+        })
+    }
 }
 
 impl BufferedBody

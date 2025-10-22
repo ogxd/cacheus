@@ -53,6 +53,7 @@ futures-core = "0.3.30"
 prometheus = "0.13"
 serde-inline-default = "0.2.3"
 enum_dispatch = "0.3.13"
+http-serde-ext = "1.0.2"
 
 [dev-dependencies]
 tonic = "0.11"

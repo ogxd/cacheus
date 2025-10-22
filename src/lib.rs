@@ -38,12 +38,13 @@ use metrics::Metrics;
 use simplelog::{ColorChoice, CombinedLogger, Config, TermLogger, TerminalMode};
 use status::Status;
 use tokio::net::TcpListener;
+use crate::config::cache::CachedResponse;
 use crate::config::CacheConfig;
 
 pub struct CacheusServer
 {
     configuration: Configuration,
-    caches: HashMap<String, (CacheConfig, ShardedCache<u128, Response<BufferedBody>>)>,
+    caches: HashMap<String, (CacheConfig, ShardedCache<u128, CachedResponse>)>,
     metrics: Metrics,
     client: Client<HttpsConnector<HttpConnector>, BufferedBody>,
 }

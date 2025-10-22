@@ -1,4 +1,7 @@
+use serde::{Serialize, Deserialize};
+
 #[allow(dead_code)]
+#[derive(Serialize, Deserialize)]
 pub struct ArenaLinkedList<T>
 {
     count: usize,
@@ -254,6 +257,7 @@ impl<'a, T> Iterator for Enumerator<'a, T>
     }
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct ArenaLinkedListNode<T>
 {
     before_index: usize,

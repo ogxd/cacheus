@@ -3,7 +3,7 @@ use std::{str::FromStr, sync::Arc};
 use hyper::{header::{HeaderName, HeaderValue}, Request, Response, Uri};
 use serde::{Deserialize, Serialize};
 use serde_inline_default::serde_inline_default;
-use crate::{buffered_body::BufferedBody, config::conditions::Condition, status::Status, CacheusServer, CallContext};
+use crate::{buffered_body::BufferedBody, config::{cache::CachedResponse, conditions::Condition}, status::Status, CacheusServer, CallContext};
 
 trait Middleware {
     async fn on_request(&self, context: &mut CallContext, service: Arc<CacheusServer>, request: &mut Request<BufferedBody>) -> Option<(Arc<Response<BufferedBody>>, Status)>;
@@ -86,7 +86,7 @@ impl Middleware for Cache {
             let key = cache_config.create_key(&request);
             if let Some(cached_response) = cache_instance.try_get_locked(&key) {
                 _context.variables.insert("$cache_status".to_string(), "hit".to_string());
-                return Some((Arc::new(cached_response.as_ref().clone()), Status::Hit));
+                return Some((Arc::new(cached_response.as_ref().clone().response), Status::Hit));
             }
         }
         _context.variables.insert("$cache_status".to_string(), "miss".to_string());
@@ -99,7 +99,7 @@ impl Middleware for Cache {
         }
         if let Some((cache_config, cache_instance)) = service.caches.get(&self.cache_name) {
             let key = cache_config.create_key(&request);
-            cache_instance.try_add_arc_locked(key, response.clone());
+            cache_instance.try_add_arc_locked(key, CachedResponse { response: response.clone() });
         }
     }
 }

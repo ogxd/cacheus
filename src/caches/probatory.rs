@@ -1,16 +1,22 @@
 use std::{sync::Arc, time::Duration};
+use std::hash::Hash;
+
+use serde::Serialize;
 
 use super::lru::ExpirationType;
 use crate::{caches::Cache, LruCache};
 
 #[allow(dead_code)]
 pub struct ProbatoryCache<K, V>
+where
+    K: Eq + Hash + Serialize + Clone,
+    V: Serialize,
 {
     probatory: Option<LruCache<K, ()>>,
     resident: LruCache<K, V>,
 }
 
-impl<K: Eq + std::hash::Hash + Clone, V> Cache<K, V> for ProbatoryCache<K, V>
+impl<K: Eq + Hash + Serialize + Clone, V: Serialize> Cache<K, V> for ProbatoryCache<K, V>
 {
     fn len(&self) -> usize
     {
@@ -38,7 +44,7 @@ impl<K: Eq + std::hash::Hash + Clone, V> Cache<K, V> for ProbatoryCache<K, V>
 }
 
 #[allow(dead_code)]
-impl<K, V> ProbatoryCache<K, V>
+impl<K: Eq + Hash + Serialize, V: Serialize> ProbatoryCache<K, V>
 where
     K: Eq + std::hash::Hash + Clone,
 {

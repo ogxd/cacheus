@@ -2,12 +2,20 @@ use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use std::hash::Hash;
+
+use serde::ser::SerializeStruct;
+use serde::{Serialize, Deserialize};
 
 use crate::caches::Cache;
 use crate::ArenaLinkedList;
 
 #[allow(dead_code)]
+#[derive(Serialize, Deserialize)]
 pub struct LruCache<K, V>
+where
+    K: Eq + Hash + Serialize,
+    V: Serialize,
 {
     lru_list: ArenaLinkedList<K>,
     map: HashMap<K, LruCacheEntry<V>>,
@@ -16,13 +24,14 @@ pub struct LruCache<K, V>
     max_size: usize,
 }
 
-#[derive(PartialEq, Clone, Copy)]
+#[derive(PartialEq, Clone, Copy, Serialize, Deserialize)]
 pub enum ExpirationType
 {
     Absolute,
     Sliding,
 }
 
+//#[derive(Serialize, Deserialize)]
 struct LruCacheEntry<V>
 {
     node_index: usize,
@@ -30,7 +39,46 @@ struct LruCacheEntry<V>
     value: Arc<V>,
 }
 
-impl<K: Eq + std::hash::Hash + Clone, V> Cache<K, V> for LruCache<K, V>
+impl<V: Serialize> Serialize for LruCacheEntry<V> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut s = serializer.serialize_struct("LruCacheEntry", 3)?;
+        s.serialize_field("node_index", &self.node_index)?;
+
+        // Instant isn't serializable — store a relative timestamp instead
+        let since_creation = self.insertion.elapsed().as_secs_f64();
+        s.serialize_field("insertion_elapsed_secs", &since_creation)?;
+
+        // Arc<V> isn't serializable directly — serialize inner V
+        s.serialize_field("value", &*self.value)?;
+        s.end()
+    }
+}
+
+impl<'de, V: Deserialize<'de>> Deserialize<'de> for LruCacheEntry<V> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Helper<V> {
+            node_index: usize,
+            insertion_elapsed_secs: f64,
+            value: V,
+        }
+
+        let h = Helper::deserialize(deserializer)?;
+        Ok(Self {
+            node_index: h.node_index,
+            insertion: Instant::now() - Duration::from_secs_f64(h.insertion_elapsed_secs),
+            value: Arc::new(h.value),
+        })
+    }
+}
+
+impl<K: Eq + Hash + Serialize + Clone, V: Serialize> Cache<K, V> for LruCache<K, V>
 {
     fn len(&self) -> usize
     {
@@ -94,7 +142,7 @@ impl<K: Eq + std::hash::Hash + Clone, V> Cache<K, V> for LruCache<K, V>
 }
 
 #[allow(dead_code)]
-impl<K, V> LruCache<K, V>
+impl<K: Eq + Hash + Serialize, V: Serialize> LruCache<K, V>
 where
     K: Eq + std::hash::Hash + Clone,
 {

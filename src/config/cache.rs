@@ -69,10 +69,10 @@ impl CacheConfig {
     }
 
     /// Add cache to the provided cache map
-    pub fn add_cache(&self, caches: &mut HashMap<String, (CacheConfig, ShardedCache<u128, Response<BufferedBody>>)>) {
+    pub fn add_cache(&self, caches: &mut HashMap<String, (CacheConfig, ShardedCache<u128, CachedResponse>)>) {
         match self {
             CacheConfig::InMemory { in_memory } => {
-                let cache = ShardedCache::<u128, Response<BufferedBody>>::new(
+                let cache = ShardedCache::<u128, CachedResponse>::new(
                     in_memory.shards,
                     in_memory.probatory_size,
                     in_memory.resident_size,
@@ -83,4 +83,10 @@ impl CacheConfig {
             },
         }
     }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CachedResponse {
+    #[serde(with = "http_serde_ext::response")]
+    pub response: Response<BufferedBody>,
 }
