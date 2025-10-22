@@ -1,13 +1,13 @@
 use std::{str::FromStr, sync::Arc};
 
 use hyper::{header::{HeaderName, HeaderValue}, Request, Response, Uri};
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use serde_inline_default::serde_inline_default;
-use crate::{buffered_body::BufferedBody, config::conditions::Condition, status::Status, CacheusServer};
+use crate::{buffered_body::BufferedBody, config::conditions::Condition, status::Status, CacheusServer, CallContext};
 
 trait Middleware {
-    async fn on_request(&self, service: Arc<CacheusServer>, request: &mut Request<BufferedBody>) -> Option<(Arc<Response<BufferedBody>>, Status)>;
-    async fn on_response(&self, service: Arc<CacheusServer>, request: &Request<BufferedBody>, response: &mut Response<BufferedBody>);
+    async fn on_request(&self, context: &mut CallContext, service: Arc<CacheusServer>, request: &mut Request<BufferedBody>) -> Option<(Arc<Response<BufferedBody>>, Status)>;
+    async fn on_response(&self, context: &mut CallContext, service: Arc<CacheusServer>, request: &Request<BufferedBody>, response: &mut Response<BufferedBody>);
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -18,29 +18,32 @@ pub enum MiddlewareEnum {
     Forward { forward_request: Forward }, // TODO: Support multiple targets, DNS load balancing, redirects, etc.
     AddHeader { add_response_header: AddHeader }, // TODO: If before forward: add request header, else add response header? Or separate types?
     ReplaceResponseBody { replace_response_body: ReplaceResponseBody },
+    Log { log: Log },
     // TODO: RateLimit, Compress, 
 }
 
 impl MiddlewareEnum {
-    pub async fn on_request(&self, service: Arc<CacheusServer>, request: &mut Request<BufferedBody>) -> Option<(Arc<Response<BufferedBody>>, Status)> {
-        info!("Processing middleware request: {:?}", self);
+    pub async fn on_request(&self, context: &mut CallContext, service: Arc<CacheusServer>, request: &mut Request<BufferedBody>) -> Option<(Arc<Response<BufferedBody>>, Status)> {
+        debug!("Processing middleware request: {:?}", self);
         match self {
-            MiddlewareEnum::Block { block_request } => block_request.on_request(service, request).await,
-            MiddlewareEnum::Cache { use_cache } => use_cache.on_request(service, request).await,
-            MiddlewareEnum::Forward { forward_request } => forward_request.on_request(service, request).await,
-            MiddlewareEnum::AddHeader { add_response_header } => add_response_header.on_request(service, request).await,
-            MiddlewareEnum::ReplaceResponseBody { replace_response_body } => replace_response_body.on_request(service, request).await,
+            MiddlewareEnum::Block { block_request } => block_request.on_request(context, service, request).await,
+            MiddlewareEnum::Cache { use_cache } => use_cache.on_request(context, service, request).await,
+            MiddlewareEnum::Forward { forward_request } => forward_request.on_request(context, service, request).await,
+            MiddlewareEnum::AddHeader { add_response_header } => add_response_header.on_request(context, service, request).await,
+            MiddlewareEnum::ReplaceResponseBody { replace_response_body } => replace_response_body.on_request(context, service, request).await,
+            MiddlewareEnum::Log { log } => log.on_request(context, service, request).await,
         }
     }
 
-    pub async fn on_response(&self, service: Arc<CacheusServer>, request: &Request<BufferedBody>, response: &mut Response<BufferedBody>) {
-        info!("Processing middleware response: {:?}", self);
+    pub async fn on_response(&self, context: &mut CallContext, service: Arc<CacheusServer>, request: &Request<BufferedBody>, response: &mut Response<BufferedBody>) {
+        debug!("Processing middleware response: {:?}", self);
         match self {
-            MiddlewareEnum::Block { block_request } => block_request.on_response(service, request, response).await,
-            MiddlewareEnum::Cache { use_cache } => use_cache.on_response(service, request, response).await,
-            MiddlewareEnum::Forward { forward_request } => forward_request.on_response(service, request, response).await,
-            MiddlewareEnum::AddHeader { add_response_header } => add_response_header.on_response(service, request, response).await,
-            MiddlewareEnum::ReplaceResponseBody { replace_response_body } => replace_response_body.on_response(service, request, response).await,
+            MiddlewareEnum::Block { block_request } => block_request.on_response(context, service, request, response).await,
+            MiddlewareEnum::Cache { use_cache } => use_cache.on_response(context, service, request, response).await,
+            MiddlewareEnum::Forward { forward_request } => forward_request.on_response(context, service, request, response).await,
+            MiddlewareEnum::AddHeader { add_response_header } => add_response_header.on_response(context, service, request, response).await,
+            MiddlewareEnum::ReplaceResponseBody { replace_response_body } => replace_response_body.on_response(context, service, request, response).await,
+            MiddlewareEnum::Log { log } => log.on_response(context, service, request, response).await,
         }
     }
 }
@@ -55,14 +58,14 @@ pub struct Block {
 }
 
 impl Middleware for Block {
-    async fn on_request(&self, _service: Arc<CacheusServer>, request: &mut Request<BufferedBody>) -> Option<(Arc<Response<BufferedBody>>, Status)> {
+    async fn on_request(&self, _context: &mut CallContext, _service: Arc<CacheusServer>, request: &mut Request<BufferedBody>) -> Option<(Arc<Response<BufferedBody>>, Status)> {
         if !self.when.as_ref().is_none_or(|w| w.evaluate(&request)) {
             return None;
         }
         return Some((Arc::new(Response::builder().status(self.status_code).body(BufferedBody::from_bytes(b"")).unwrap()), Status::Block));
     }
 
-    async fn on_response(&self, _service: Arc<CacheusServer>, _request: &Request<BufferedBody>, _response: &mut Response<BufferedBody>) {
+    async fn on_response(&self, _context: &mut CallContext, _service: Arc<CacheusServer>, _request: &Request<BufferedBody>, _response: &mut Response<BufferedBody>) {
 
     }
 }
@@ -75,20 +78,22 @@ pub struct Cache {
 }
 
 impl Middleware for Cache {
-    async fn on_request(&self, service: Arc<CacheusServer>, request: &mut Request<BufferedBody>) -> Option<(Arc<Response<BufferedBody>>, Status)> {
+    async fn on_request(&self, _context: &mut CallContext, service: Arc<CacheusServer>, request: &mut Request<BufferedBody>) -> Option<(Arc<Response<BufferedBody>>, Status)> {
         if !self.when.as_ref().is_none_or(|w| w.evaluate(&request)) {
             return None;
         }
         if let Some((cache_config, cache_instance)) = service.caches.get(&self.cache_name) {
             let key = cache_config.create_key(&request);
             if let Some(cached_response) = cache_instance.try_get_locked(&key) {
+                _context.variables.insert("$cache_status".to_string(), "hit".to_string());
                 return Some((Arc::new(cached_response.as_ref().clone()), Status::Hit));
             }
         }
+        _context.variables.insert("$cache_status".to_string(), "miss".to_string());
         return None;
     }
 
-    async fn on_response(&self, service: Arc<CacheusServer>, request: &Request<BufferedBody>, response: &mut Response<BufferedBody>) {
+    async fn on_response(&self, context: &mut CallContext, service: Arc<CacheusServer>, request: &Request<BufferedBody>, response: &mut Response<BufferedBody>) {
         if !self.when.as_ref().is_none_or(|w| w.evaluate_with_response(&request, &response)) {
             return;
         }
@@ -102,10 +107,12 @@ impl Middleware for Cache {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Forward {
     pub target_host: String,
+    #[serde(default)]
+    pub scheme: Option<String>,
 }
 
 impl Middleware for Forward {
-    async fn on_request(&self, service: Arc<CacheusServer>, request: &mut Request<BufferedBody>) -> Option<(Arc<Response<BufferedBody>>, Status)> {
+    async fn on_request(&self, context: &mut CallContext, service: Arc<CacheusServer>, request: &mut Request<BufferedBody>) -> Option<(Arc<Response<BufferedBody>>, Status)> {
         let target_host = match request.headers().get("x-target-host") {
             Some(value) => value.to_str().unwrap().to_string(),
             None => self.target_host.clone(),
@@ -116,11 +123,13 @@ impl Middleware for Forward {
         }
 
         let target_uri = Uri::builder()
-            .scheme("http")
+            .scheme(self.scheme.clone().unwrap_or("http".to_string()).as_str()) // Suboptimal
             .authority(target_host.clone())
             .path_and_query(request.uri().path_and_query().unwrap().clone())
             .build()
             .expect("Failed to build target URI");
+
+        context.variables.insert("$forward_target".to_string(), target_uri.to_string());
 
         let mut forwarded_req = Request::builder()
             .method(request.method())
@@ -139,7 +148,7 @@ impl Middleware for Forward {
         return Some((Arc::new(Response::from_parts(parts, buffered_body)), Status::Miss));
     }
 
-    async fn on_response(&self, _service: Arc<CacheusServer>, _request: &Request<BufferedBody>, _response: &mut Response<BufferedBody>) {
+    async fn on_response(&self, _context: &mut CallContext, _service: Arc<CacheusServer>, _request: &Request<BufferedBody>, _response: &mut Response<BufferedBody>) {
 
     }
 }
@@ -153,18 +162,20 @@ pub struct AddHeader {
 }
 
 impl Middleware for AddHeader {
-    async fn on_request(&self, _service: Arc<CacheusServer>, _request: &mut Request<BufferedBody>) -> Option<(Arc<Response<BufferedBody>>, Status)> {
+    async fn on_request(&self, _context: &mut CallContext, _service: Arc<CacheusServer>, _request: &mut Request<BufferedBody>) -> Option<(Arc<Response<BufferedBody>>, Status)> {
         None
     }
 
-    async fn on_response(&self, _service: Arc<CacheusServer>, request: &Request<BufferedBody>, response: &mut Response<BufferedBody>) {
+    async fn on_response(&self, _context: &mut CallContext, _service: Arc<CacheusServer>, request: &Request<BufferedBody>, response: &mut Response<BufferedBody>) {
         if !self.when.as_ref().is_none_or(|w| w.evaluate_with_response(&request, &response)) {
             return;
         }
+        // Replace variables in header value, if any
+        let value = _context.variables.iter().fold(self.value.clone(), |acc, (k, v)| acc.replace(k.as_str(), v.as_str()));
+        // Insert the header
         response.headers_mut().insert(
             HeaderName::from_str(self.name.as_str()).unwrap(), // Clearly not optimal
-            HeaderValue::from_str(self.value.as_str()).unwrap())
-            .unwrap();
+            HeaderValue::from_str(value.as_str()).unwrap());
     }
 }
 
@@ -177,11 +188,11 @@ pub struct ReplaceResponseBody {
 }
 
 impl Middleware for ReplaceResponseBody {
-    async fn on_request(&self, _service: Arc<CacheusServer>, _request: &mut Request<BufferedBody>) -> Option<(Arc<Response<BufferedBody>>, Status)> {
+    async fn on_request(&self, _context: &mut CallContext, _service: Arc<CacheusServer>, _request: &mut Request<BufferedBody>) -> Option<(Arc<Response<BufferedBody>>, Status)> {
         None
     }
 
-    async fn on_response(&self, _service: Arc<CacheusServer>, request: &Request<BufferedBody>, response: &mut Response<BufferedBody>) {
+    async fn on_response(&self, _context: &mut CallContext, _service: Arc<CacheusServer>, request: &Request<BufferedBody>, response: &mut Response<BufferedBody>) {
         if !self.when.as_ref().is_none_or(|w| w.evaluate_with_response(&request, &response)) {
             return;
         }
@@ -192,5 +203,28 @@ impl Middleware for ReplaceResponseBody {
                 response.headers_mut().insert("content-length", content_length.to_string().parse().unwrap());
             }
         }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Log {
+    pub level: String,
+    pub value: String,
+    #[serde(default)]
+    pub when: Option<Condition>,
+}
+
+impl Middleware for Log {
+    async fn on_request(&self, _context: &mut CallContext, _service: Arc<CacheusServer>, _request: &mut Request<BufferedBody>) -> Option<(Arc<Response<BufferedBody>>, Status)> {
+        None
+    }
+
+    async fn on_response(&self, _context: &mut CallContext, _service: Arc<CacheusServer>, request: &Request<BufferedBody>, response: &mut Response<BufferedBody>) {
+        if !self.when.as_ref().is_none_or(|w| w.evaluate_with_response(&request, &response)) {
+            return;
+        }
+        // Replace variables in header value, if any
+        let value = _context.variables.iter().fold(self.value.clone(), |acc, (k, v)| acc.replace(k.as_str(), v.as_str()));
+        log::log!(log::Level::from_str(self.level.as_str()).unwrap_or(log::Level::Info), "{}", value);
     }
 }

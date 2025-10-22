@@ -13,8 +13,6 @@ pub struct Configuration {
     #[serde_inline_default(8001)]
     pub healthcheck_port: u16,
     #[serde_inline_default(true)]
-    pub https: bool,
-    #[serde_inline_default(true)]
     pub http2: bool,
     #[serde_inline_default("info".to_string())]
     pub minimum_log_level: String,
