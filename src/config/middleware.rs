@@ -84,22 +84,23 @@ impl Middleware for Cache {
         }
         if let Some((cache_config, cache_instance)) = service.caches.get(&self.cache_name) {
             let key = cache_config.create_key(&request);
-            if let Some(cached_response) = cache_instance.try_get_locked(&key) {
+            if let Some(cached_response) = cache_instance.get(&key) {
                 _context.variables.insert("$cache_status".to_string(), "hit".to_string());
-                return Some((Arc::new(cached_response.as_ref().clone()), Status::Hit));
+                return Some((Arc::new(cached_response.value().clone()), Status::Hit)); // Clone ? Why not Arc ?
             }
         }
         _context.variables.insert("$cache_status".to_string(), "miss".to_string());
         return None;
     }
 
-    async fn on_response(&self, context: &mut CallContext, service: Arc<CacheusServer>, request: &Request<BufferedBody>, response: &mut Response<BufferedBody>) {
+    async fn on_response(&self, _context: &mut CallContext, service: Arc<CacheusServer>, request: &Request<BufferedBody>, response: &mut Response<BufferedBody>) {
         if !self.when.as_ref().is_none_or(|w| w.evaluate_with_response(&request, &response)) {
             return;
         }
         if let Some((cache_config, cache_instance)) = service.caches.get(&self.cache_name) {
+            
             let key = cache_config.create_key(&request);
-            cache_instance.try_add_arc_locked(key, response.clone());
+            cache_instance.insert(key, response.clone());
         }
     }
 }

@@ -87,7 +87,7 @@ impl CacheusServer
 
         // Initialize caches from configuration
         for cache in &configuration.caches {
-            cache.add_cache(&mut caches);
+            cache.add_cache(&mut caches).await;
         }
         
         let server = Arc::new(CacheusServer {

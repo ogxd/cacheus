@@ -1,0 +1,30 @@
+listening_port: 8080
+prometheus_port: 8081
+heathcheck_port: 8082
+http2: false
+minimum_log_level: info
+
+middlewares:
+  # - block_request:
+  #     when:
+  #       not:
+  #         path_contains: 'download'
+  - log:
+      level: info
+      value: 'Cache status: $cache_status, Forward target: $forward_target'
+  - add_response_header:
+      name: 'X-Cache-Status'
+      value: '$cache_status'
+  - use_cache:
+      cache_name: files
+  - forward_request:
+      scheme: https
+      target_host: deviceatlas.com
+
+caches:
+  - in_memory:
+      name: files
+      ttl_seconds: 86400
+      hash_path: false
+      hash_query: true
+      hash_body: false
