@@ -1,7 +1,5 @@
 listening_port: 3001
 prometheus_port: 8081
-https: false
-http2: false
 minimum_log_level: debug
 
 middlewares:

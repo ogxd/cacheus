@@ -1,8 +1,6 @@
 ---
 listening_port: 4002
 prometheus_port: 4004
-https: true
-http2: false
 minimum_log_level: 'debug'
 
 middlewares:

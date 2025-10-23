@@ -1,3 +1,2 @@
 listening_port: 3001
-https: false
-http2: true
+http2_only: true

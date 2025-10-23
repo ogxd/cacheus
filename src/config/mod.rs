@@ -8,4 +8,4 @@ pub use configuration::Configuration;
 pub use cache::{CacheConfig, MemoryCache};
 pub use conditions::Condition;
 
-pub use middleware::{MiddlewareEnum, Block, Cache, Forward, AddHeader};
+pub use middleware::{MiddlewareEnum, Block, CacheMiddleware, Forward, AddHeader};
