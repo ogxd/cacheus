@@ -14,7 +14,7 @@ use serde::Serialize;
 pub use sharded::ShardedCache;
 
 #[enum_dispatch]
-trait Cache<K, V> {
+pub trait Cache<K, V> {
     fn len(&self) -> usize;
     fn try_add(&mut self, key: K, value: V) -> bool;
     fn try_get(&mut self, key: &K) -> Option<Arc<V>>;

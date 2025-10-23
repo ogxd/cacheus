@@ -13,10 +13,12 @@ mod status;
 
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
+use std::io::Write;
 use std::net::SocketAddr;
 use std::ops::Deref;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::{self, Duration};
 
 pub use caches::*;
 pub use collections::*;
@@ -38,6 +40,7 @@ use metrics::Metrics;
 use simplelog::{ColorChoice, CombinedLogger, Config, TermLogger, TerminalMode};
 use status::Status;
 use tokio::net::TcpListener;
+use postcard::{from_bytes, to_vec};
 use crate::config::cache::CachedResponse;
 use crate::config::CacheConfig;
 
@@ -191,6 +194,22 @@ impl CacheusServer
                 });
             }
         };
+
+        // Save caches every 10s
+        let server_clone = server.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(10));
+            loop {
+                interval.tick().await;
+                for (_name, (_config, cache)) in &server_clone.caches {
+                    info!("Saving cache with {} entries", cache.len());
+                    let output = to_vec(&cache).unwrap();
+
+                    let mut file = std::fs::File::create("data.bin")?; // overwrites if exists
+                    file.write_all(&encoded)?;
+                }
+            }
+        });
 
         // Log created middlewares
         for middleware in &server.configuration.middlewares {

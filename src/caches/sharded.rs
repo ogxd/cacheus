@@ -2,7 +2,7 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use serde::Serialize;
+use serde::{Serialize, Deserialize};
 
 use super::lru::ExpirationType;
 use crate::caches::Cache;
