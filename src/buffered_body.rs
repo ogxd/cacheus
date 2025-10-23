@@ -9,6 +9,7 @@ use futures::Future;
 use hyper::body::{Body, Frame};
 use hyper::HeaderMap;
 use pin_project_lite::pin_project;
+use serde::{Deserialize, Serialize};
 
 pin_project! {
     /// Future that resolves into a [`Collected`].
@@ -54,6 +55,71 @@ pub struct BufferedBody
 {
     bufs: BytesMut,
     trailers: Option<HeaderMap>,
+}
+
+impl BufferedBody {
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut v = Vec::new();
+
+        // Serialize bufs length + data
+        let data = self.bufs.as_ref();
+        let len = data.len() as u64;
+        v.extend_from_slice(&len.to_le_bytes());
+        v.extend_from_slice(data);
+
+        // Serialize trailers as optional key/value map
+        if let Some(t) = &self.trailers {
+            v.push(1); // present flag
+            let map: HashMap<String, Vec<String>> = t
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_str().map(|s| vec![s.to_string()]).unwrap_or_default()))
+                .collect();
+            let mut buffer = Vec::new();
+            let encoded = postcard::to_slice(&map, &mut buffer).unwrap();
+            v.extend_from_slice(&(encoded.len() as u64).to_le_bytes());
+            v.extend_from_slice(&encoded);
+        } else {
+            v.push(0); // not present
+        }
+
+        v
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+        use std::convert::TryInto;
+        let mut pos = 0;
+
+        // bufs
+        let len = u64::from_le_bytes(bytes[pos..pos + 8].try_into().unwrap()) as usize;
+        pos += 8;
+        let buf = BytesMut::from(&bytes[pos..pos + len]);
+        pos += len;
+
+        // trailers
+        let has_trailers = bytes[pos] == 1;
+        pos += 1;
+
+        let trailers = if has_trailers {
+            let map_len = u64::from_le_bytes(bytes[pos..pos + 8].try_into().unwrap()) as usize;
+            pos += 8;
+            let map_bytes = &bytes[pos..pos + map_len];
+            let map: HashMap<String, Vec<String>> = postcard::from_bytes(map_bytes).unwrap();
+            let mut hm = HeaderMap::new();
+            for (k, vs) in map {
+                for v in vs {
+                    hm.append(
+                        k.parse::<hyper::header::HeaderName>().unwrap(),
+                        v.parse::<hyper::header::HeaderValue>().unwrap(),
+                    );
+                }
+            }
+            Some(hm)
+        } else {
+            None
+        };
+
+        BufferedBody { bufs: buf, trailers }
+    }
 }
 
 impl BufferedBody
@@ -114,7 +180,7 @@ impl BufferedBody
         }
     }
 
-    pub fn from_bytes(b: &[u8]) -> BufferedBody
+    pub fn from_body(b: &[u8]) -> BufferedBody
     {
         let mut bufs = BytesMut::new();
         bufs.extend(b);

@@ -25,11 +25,11 @@ impl Condition {
         }
     }
 
-    pub fn evaluate_with_response(&self, request: &Request<BufferedBody>, response: &Response<BufferedBody>) -> bool {
+    pub fn evaluate_with_response(&self, request: &Request<BufferedBody>, response: &Option<Response<BufferedBody>>) -> bool {
         match self {
-            Condition::HeaderExists { header_exists } => request.headers().contains_key(header_exists),
+            Condition::HeaderExists { header_exists } => request.headers().contains_key(header_exists), // Response headers to consider?
             Condition::PathContains { path_contains } => contains_wildcard(&request.uri().path_and_query().unwrap().as_str(), path_contains),
-            Condition::StatusCodeIs { status_code_is } => response.status().as_u16() == *status_code_is,
+            Condition::StatusCodeIs { status_code_is } => response.as_ref().map_or(false, |resp| resp.status().as_u16() == *status_code_is),
             Condition::All { all } => all.iter().all(|c| c.evaluate_with_response(request, response)),
             Condition::Any { any } => any.iter().any(|c| c.evaluate_with_response(request, response)),
             Condition::Not { not } => !not.evaluate_with_response(request, response),

@@ -2,7 +2,7 @@
 extern crate log;
 
 mod buffered_body;
-mod caches;
+// mod caches;
 mod collections;
 // pub mod config;
 pub mod config;
@@ -18,12 +18,13 @@ use std::ops::Deref;
 use std::str::FromStr;
 use std::sync::Arc;
 
-pub use caches::*;
+// pub use caches::*;
 pub use collections::*;
 pub use config::{Configuration, MiddlewareEnum};
 use buffered_body::BufferedBody;
 use executor::TokioExecutor;
 use futures::join;
+use gxhash::GxBuildHasher;
 use hyper::body::{Body, Incoming};
 use hyper::server::conn::{http1, http2};
 use hyper::service::service_fn;
@@ -38,12 +39,14 @@ use metrics::Metrics;
 use simplelog::{ColorChoice, CombinedLogger, Config, TermLogger, TerminalMode};
 use status::Status;
 use tokio::net::TcpListener;
+use foyer::HybridCache;
+use crate::config::cache::CachedResponse;
 use crate::config::CacheConfig;
 
 pub struct CacheusServer
 {
     configuration: Configuration,
-    caches: HashMap<String, (CacheConfig, ShardedCache<u128, Response<BufferedBody>>)>,
+    caches: HashMap<String, (CacheConfig, HybridCache<u128, CachedResponse, GxBuildHasher>)>,
     metrics: Metrics,
     client: Client<HttpsConnector<HttpConnector>, BufferedBody>,
 }
@@ -86,7 +89,7 @@ impl CacheusServer
 
         // Initialize caches from configuration
         for cache in &configuration.caches {
-            cache.add_cache(&mut caches);
+            cache.add_cache(&mut caches).await;
         }
         
         let server = Arc::new(CacheusServer {
@@ -94,7 +97,7 @@ impl CacheusServer
             caches: caches,
             metrics: Metrics::new(),
             client: Client::builder(TokioExecutor)
-                .http2_only(configuration.http2)
+                .http2_only(configuration.http2_only)
                 // .pool_max_idle_per_host(configuration.max_idle_connections_per_host as usize)
                 // .http2_max_send_buf_size(128_000_000)
                 // .timer(hyper_util::rt::TokioTimer::new())
@@ -110,7 +113,7 @@ impl CacheusServer
             let service_address = SocketAddr::from(([0, 0, 0, 0], server.configuration.listening_port));
             info!(
                 "Service listening on http://{}, http2:{}",
-                service_address, configuration.http2
+                service_address, configuration.http2_only
             );
 
             let listener = TcpListener::bind(service_address).await.unwrap();
@@ -122,7 +125,7 @@ impl CacheusServer
                 // `hyper::rt` IO traits.
                 let io = TokioIo::new(stream);
                 let server = server.clone();
-                if configuration.http2 {
+                if configuration.http2_only {
                     tokio::task::spawn(async move {
                         trace!("Listening for http2 connections...");
                         let server_for_metrics = server.clone();
@@ -203,14 +206,14 @@ impl CacheusServer
 
     async fn healthcheck(_req: Request<hyper::body::Incoming>) -> Result<Response<BufferedBody>, hyper::Error>
     {
-        Ok(Response::new(BufferedBody::from_bytes(b"Healthy")))
+        Ok(Response::new(BufferedBody::from_body(b"Healthy")))
     }
 
     async fn prometheus(
         server: Arc<CacheusServer>, _: Request<hyper::body::Incoming>,
     ) -> Result<Response<BufferedBody>, hyper::Error>
     {
-        Ok(Response::new(BufferedBody::from_bytes(&server.metrics.encode())))
+        Ok(Response::new(BufferedBody::from_body(&server.metrics.encode())))
     }
 
     async fn call_async(
@@ -221,28 +224,29 @@ impl CacheusServer
 
         let timestamp = std::time::Instant::now();
 
-        let (response, status) = CacheusServer::call_internal_async(service.clone(), request).await;
+        let response = CacheusServer::call_internal_async(service.clone(), request).await;
 
-        let elapsed = timestamp.elapsed();
-        let status_str = status.to_string();
-        service.metrics.request_duration.with_label_values(&[&status_str]).observe(elapsed.as_secs_f64());
+        //let elapsed = timestamp.elapsed();
+        //let status_str = status.to_string();
+        // service.metrics.request_duration.with_label_values(&[&status_str]).observe(elapsed.as_secs_f64());
         //service.metrics.cache_entries.set(service.cache.len() as f64);
         match response {
             Ok(ok) => {
-                service.metrics.requests.with_label_values(&[&status_str, ok.status().as_str()]).inc();
+                //service.metrics.requests.with_label_values(&[&status_str, ok.status().as_str()]).inc();
                 Ok(ok)
             }
             Err(e) => {
-                service.metrics.requests.with_label_values(&[&status_str, "error"]).inc();
+                //service.metrics.requests.with_label_values(&[&status_str, "error"]).inc();
                 Err(e)
             }
         }
     }
 
-    async fn call_internal_async(service: Arc<CacheusServer>, request: Request<Incoming>,) -> (Result<Response<BufferedBody>, CacheusError>, Status)
+    async fn call_internal_async(service: Arc<CacheusServer>, request: Request<Incoming>,) -> Result<Response<BufferedBody>, CacheusError>
     {
         let mut context = CallContext {
             variables: HashMap::new(),
+            stale_response: None,
         };
         
         // Request buffering
@@ -250,7 +254,7 @@ impl CacheusServer
         let buffered_body = BufferedBody::collect_buffered(body).await.unwrap();
         let mut buffered_request = Request::from_parts(parts, buffered_body);
 
-        let mut response: Option<(Arc<Response<BufferedBody>>, Status)> = None;
+        let mut response: Option<Response<BufferedBody>> = None;
         let mut i = 0;
 
         // Evaluate middlewares until one returns a response
@@ -262,25 +266,25 @@ impl CacheusServer
             }
         }
 
-        if response.is_none() {
-            return (Err(CacheusError { message: "No response generated by middlewares".to_string() }), Status::Ignore);
-        }
-
-        let response = response.unwrap();
-        let status = response.1;
-        let mut response = response.0.deref().clone();
-
         // In reverse order, apply middlewares on the response, starting from the one that produced the response
         for j in (0..i).rev() {
             service.configuration.middlewares[j].on_response(&mut context, service.clone(), &buffered_request, &mut response).await;
         }
 
-        return (Ok(response), status);
+        if response.is_none() {
+            return Err(CacheusError { message: "No response generated by middlewares".to_string() });
+        }
+
+        let response = response.unwrap();
+        //let mut response = response.0.deref().clone();
+
+        return Ok(response);
     }
 }
 
 pub struct CallContext {
     variables: HashMap<String, String>,
+    stale_response: Option<Response<BufferedBody>>,
 }
 
 struct CacheusError
