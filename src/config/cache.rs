@@ -86,25 +86,25 @@ pub struct CachedResponse {
 impl foyer::Code for CachedResponse {
     fn encode(&self, writer: &mut impl Write) -> std::result::Result<(), foyer::CodeError> {
         let status = self.response.status().as_u16();
-        writer.write_all(&status.to_be_bytes()).unwrap();
+        writer.write_all(&status.to_le_bytes()).unwrap();
 
         // Serialize headers
         let headers = self.response.headers();
         let header_count = headers.len() as u32;
-        writer.write_all(&header_count.to_be_bytes()).unwrap();
+        writer.write_all(&header_count.to_le_bytes()).unwrap();
         for (name, value) in headers.iter() {
             let name_bytes = name.as_str().as_bytes();
             let value_bytes = value.as_bytes();
 
-            writer.write_all(&(name_bytes.len() as u32).to_be_bytes()).unwrap();
+            writer.write_all(&(name_bytes.len() as u32).to_le_bytes()).unwrap();
             writer.write_all(name_bytes).unwrap();
-            writer.write_all(&(value_bytes.len() as u32).to_be_bytes()).unwrap();
+            writer.write_all(&(value_bytes.len() as u32).to_le_bytes()).unwrap();
             writer.write_all(value_bytes).unwrap();
         }
 
         // Serialize body (assuming BufferedBody can provide bytes)
         let body_bytes = self.response.body().to_bytes();
-        writer.write_all(&(body_bytes.len() as u64).to_be_bytes()).unwrap();
+        writer.write_all(&(body_bytes.len() as u64).to_le_bytes()).unwrap();
         writer.write_all(&body_bytes).unwrap();
 
         writer.write_all(&self.insertion_epoch.to_le_bytes()).unwrap();
@@ -115,22 +115,22 @@ impl foyer::Code for CachedResponse {
     fn decode(reader: &mut impl Read) -> std::result::Result<CachedResponse, foyer::CodeError> {
         let mut buf2 = [0u8; 2];
         reader.read_exact(&mut buf2).unwrap();
-        let status = StatusCode::from_u16(u16::from_be_bytes(buf2)).map_err(|_| foyer::CodeError::SizeLimit).unwrap();
+        let status = StatusCode::from_u16(u16::from_le_bytes(buf2)).map_err(|_| foyer::CodeError::SizeLimit).unwrap();
 
         let mut buf4 = [0u8; 4];
         reader.read_exact(&mut buf4).unwrap();
-        let header_count = u32::from_be_bytes(buf4);
+        let header_count = u32::from_le_bytes(buf4);
 
         let mut headers = HeaderMap::new();
         for _ in 0..header_count {
             reader.read_exact(&mut buf4).unwrap();
-            let name_len = u32::from_be_bytes(buf4) as usize;
+            let name_len = u32::from_le_bytes(buf4) as usize;
             let mut name_buf = vec![0u8; name_len];
             reader.read_exact(&mut name_buf).unwrap();
             let name = String::from_utf8(name_buf).map_err(|_| foyer::CodeError::SizeLimit).unwrap();
 
             reader.read_exact(&mut buf4).unwrap();
-            let value_len = u32::from_be_bytes(buf4) as usize;
+            let value_len = u32::from_le_bytes(buf4) as usize;
             let mut value_buf = vec![0u8; value_len];
             reader.read_exact(&mut value_buf).unwrap();
             headers.insert(
@@ -141,7 +141,7 @@ impl foyer::Code for CachedResponse {
 
         let mut buf8 = [0u8; 8];
         reader.read_exact(&mut buf8)?;
-        let body_len = u64::from_be_bytes(buf8);
+        let body_len = u64::from_le_bytes(buf8);
         let mut body_buf = vec![0u8; body_len as usize];
         reader.read_exact(&mut body_buf)?;
 
@@ -162,8 +162,13 @@ impl foyer::Code for CachedResponse {
 
     fn estimated_size(&self) -> usize {
         let body_len = self.response.body().to_bytes().len();
-        let headers_len: usize = self.response.headers().iter().map(|(k, v)| k.as_str().len() + v.as_bytes().len()).sum();
-        2 + 4 + headers_len + 8 + body_len
+        let headers_len: usize = self.response.headers().iter().map(|(k, v) | 4 /* name size */ + k.as_str().as_bytes().len() /* name bytes */ + 4 /* value size */ + v.as_bytes().len() /* value bytes */).sum();
+        2 /* status code */
+        + 4 /* headers count */
+        + headers_len /* headers */
+        + 8 /* body size */
+        + body_len /* body */
+        + 8 /* insertion epoch */
     }
 }
 
