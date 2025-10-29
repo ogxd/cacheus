@@ -8,13 +8,11 @@ mod collections;
 pub mod config;
 mod executor;
 mod metrics;
-mod status;
 // mod server;
 
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::net::SocketAddr;
-use std::ops::Deref;
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -25,10 +23,10 @@ use buffered_body::BufferedBody;
 use executor::TokioExecutor;
 use futures::join;
 use gxhash::GxBuildHasher;
-use hyper::body::{Body, Incoming};
+use hyper::body::Incoming;
 use hyper::server::conn::{http1, http2};
 use hyper::service::service_fn;
-use hyper::{Request, Response, Uri};
+use hyper::{Request, Response};
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_tls::HttpsConnector;
 use hyper_util::client::legacy::Client;
@@ -37,7 +35,6 @@ use log::LevelFilter;
 use serde::de::StdError;
 use metrics::Metrics;
 use simplelog::{ColorChoice, CombinedLogger, Config, TermLogger, TerminalMode};
-use status::Status;
 use tokio::net::TcpListener;
 use foyer::HybridCache;
 use crate::config::cache::CachedResponse;
@@ -224,31 +221,31 @@ impl CacheusServer
 
         let timestamp = std::time::Instant::now();
 
-        let response = CacheusServer::call_internal_async(service.clone(), request).await;
+        let mut context = CallContext {
+            variables: HashMap::new(),
+            stale_response: None,
+        };
 
-        //let elapsed = timestamp.elapsed();
-        //let status_str = status.to_string();
-        // service.metrics.request_duration.with_label_values(&[&status_str]).observe(elapsed.as_secs_f64());
+        let response = CacheusServer::call_internal_async(service.clone(), &mut context, request).await;
+
+        let elapsed = timestamp.elapsed();
+        let cache_status = context.variables.get("$cache_status").map(|s| s.as_str()).unwrap_or("na");
+        service.metrics.request_duration.with_label_values(&[cache_status]).observe(elapsed.as_secs_f64());
         //service.metrics.cache_entries.set(service.cache.len() as f64);
         match response {
             Ok(ok) => {
-                //service.metrics.requests.with_label_values(&[&status_str, ok.status().as_str()]).inc();
+                service.metrics.requests.with_label_values(&[cache_status, ok.status().as_str()]).inc();
                 Ok(ok)
             }
             Err(e) => {
-                //service.metrics.requests.with_label_values(&[&status_str, "error"]).inc();
+                service.metrics.requests.with_label_values(&[cache_status, "error"]).inc();
                 Err(e)
             }
         }
     }
 
-    async fn call_internal_async(service: Arc<CacheusServer>, request: Request<Incoming>,) -> Result<Response<BufferedBody>, CacheusError>
+    async fn call_internal_async(service: Arc<CacheusServer>, context: &mut CallContext, request: Request<Incoming>,) -> Result<Response<BufferedBody>, CacheusError>
     {
-        let mut context = CallContext {
-            variables: HashMap::new(),
-            stale_response: None,
-        };
-        
         // Request buffering
         let (parts, body) = request.into_parts();
         let buffered_body = BufferedBody::collect_buffered(body).await.unwrap();
@@ -260,7 +257,7 @@ impl CacheusServer
         // Evaluate middlewares until one returns a response
         for middleware in &service.configuration.middlewares {
             i += 1;
-            if let Some(r) = middleware.on_request(&mut context, service.clone(), &mut buffered_request).await {
+            if let Some(r) = middleware.on_request(context, service.clone(), &mut buffered_request).await {
                 response = Some(r);
                 break; // On the first middleware that returns a response, we stop processing
             }
@@ -268,7 +265,7 @@ impl CacheusServer
 
         // In reverse order, apply middlewares on the response, starting from the one that produced the response
         for j in (0..i).rev() {
-            service.configuration.middlewares[j].on_response(&mut context, service.clone(), &buffered_request, &mut response).await;
+            service.configuration.middlewares[j].on_response(context, service.clone(), &buffered_request, &mut response).await;
         }
 
         if response.is_none() {
@@ -276,7 +273,6 @@ impl CacheusServer
         }
 
         let response = response.unwrap();
-        //let mut response = response.0.deref().clone();
 
         return Ok(response);
     }

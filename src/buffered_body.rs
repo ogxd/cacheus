@@ -9,7 +9,6 @@ use futures::Future;
 use hyper::body::{Body, Frame};
 use hyper::HeaderMap;
 use pin_project_lite::pin_project;
-use serde::{Deserialize, Serialize};
 
 pin_project! {
     /// Future that resolves into a [`Collected`].
@@ -89,13 +88,13 @@ impl BufferedBody {
         use std::convert::TryInto;
         let mut pos = 0;
 
-        // bufs
+        // Body bytes
         let len = u64::from_le_bytes(bytes[pos..pos + 8].try_into().unwrap()) as usize;
         pos += 8;
         let buf = BytesMut::from(&bytes[pos..pos + len]);
         pos += len;
 
-        // trailers
+        // Trailers
         let has_trailers = bytes[pos] == 1;
         pos += 1;
 
@@ -118,7 +117,7 @@ impl BufferedBody {
             None
         };
 
-        BufferedBody { bufs: buf, trailers }
+        BufferedBody { bufs: buf, trailers: trailers }
     }
 }
 
@@ -182,6 +181,7 @@ impl BufferedBody
 
     pub fn from_body(b: &[u8]) -> BufferedBody
     {
+        // Issue lies here
         let mut bufs = BytesMut::new();
         bufs.extend(b);
         BufferedBody { bufs, trailers: None }
@@ -218,5 +218,25 @@ impl Hash for BufferedBody
     {
         self.bufs.hash(state);
         //self.trailers.hash(state);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bytes::BytesMut;
+
+    #[test]
+    fn test_to_from_bytes_roundtrip() {
+        let original_data = b"hello world";
+        let body = BufferedBody {
+            bufs: BytesMut::from(&original_data[..]),
+            trailers: None,
+        };
+
+        let serialized = body.to_bytes();
+        let deserialized = BufferedBody::from_bytes(&serialized);
+
+        assert_eq!(deserialized.bufs.as_ref(), original_data);
     }
 }

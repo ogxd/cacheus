@@ -23,13 +23,12 @@ impl Metrics
                     0.02, 0.05, 0.1, /* 100ms */
                     0.2, 0.5, 1., /* 1s */
                     2., 5., 10., /* 10s */
-                ]), &["status"]
+                ]), &["cache_status"]
             )
             .unwrap(),
-            requests: CounterVec::new(Opts::new("cacheus:requests_total", "Number of cache calls"), &["status", "http_code"]).unwrap(),
+            requests: CounterVec::new(Opts::new("cacheus:requests_total", "Number of cache calls"), &["cache_status", "http_code"]).unwrap(),
             cache_entries: Gauge::with_opts(Opts::new("cacheus:cache_entries_count", "Number of entries in the resident cache")).unwrap(),
-            connection_reset: Counter::with_opts(Opts::new("cacheus:connection_reset_total", "Number of connection reset (RST)"))
-                .unwrap(),
+            connection_reset: Counter::with_opts(Opts::new("cacheus:connection_reset_total", "Number of connection reset (RST)")).unwrap(),
             registry: Registry::new(),
         };
         metrics
