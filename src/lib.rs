@@ -84,21 +84,24 @@ impl CacheusServer
             cache.add_cache(&mut caches).await;
         }
         
-        let server = Arc::new(CacheusServer {
+        let mut server = CacheusServer {
             configuration: configuration.clone(),
             caches: Arc::new(caches),
             metrics: Metrics::new(),
-        });
+        };
 
+        // Initialize middlewares
+        for middleware in &mut server.configuration.middlewares {
+            info!("Initializing middleware '{:?}'...", middleware);
+            middleware.init().await;
+        }
+
+        let server = Arc::new(server);
+
+        let service_address = SocketAddr::from(([0, 0, 0, 0], server.configuration.listening_port));
+        info!("Service listening on http://{}",service_address);
         let service = async {
-            let service_address = SocketAddr::from(([0, 0, 0, 0], server.configuration.listening_port));
-            info!(
-                "Service listening on http://{}, http2:{}",
-                service_address, configuration.http2_only
-            );
-
             let listener = TcpListener::bind(service_address).await.unwrap();
-
             // We start a loop to continuously accept incoming connections
             loop {
                 let (stream, _) = listener.accept().await.unwrap();
@@ -106,39 +109,23 @@ impl CacheusServer
                 // `hyper::rt` IO traits.
                 let io = TokioIo::new(stream);
                 let server = server.clone();
-                if configuration.http2_only {
-                    tokio::task::spawn(async move {
-                        trace!("Listening for http2 connections...");
-                        let server_for_metrics = server.clone();
-                        if let Err(err) = http2::Builder::new(TokioExecutor)
-                            .serve_connection(io, service_fn(move |req| CacheusServer::call_async(server.clone(), req)))
-                            .await
-                        {
-                            server_for_metrics.metrics.connection_reset.inc();
-                            warn!("Error serving connection: {:?}", err);
-                        }
-                    });
-                } else {
-                    tokio::task::spawn(async move {
-                        trace!("Listening for http1 connections...");
-                        let server_for_metrics = server.clone();
-                        if let Err(err) = http1::Builder::new()
-                            .serve_connection(io, service_fn(move |req| CacheusServer::call_async(server.clone(), req)))
-                            .await
-                        {
-                            server_for_metrics.metrics.connection_reset.inc();
-                            warn!("Error serving connection: {:?}", err);
-                        }
-                    });
-                }
+                tokio::task::spawn(async move {
+                    let server_for_metrics = server.clone();
+                    if let Err(err) = http2::Builder::new(TokioExecutor)
+                        .serve_connection(io, service_fn(move |req| CacheusServer::call_async(server.clone(), req)))
+                        .await
+                    {
+                        server_for_metrics.metrics.connection_reset.inc();
+                        warn!("Error serving connection: {:?}", err);
+                    }
+                });
             }
         };
 
+        let prom_address: SocketAddr = ([0, 0, 0, 0], server.configuration.prometheus_port).into();
+        info!("Prometheus listening on http://{}", prom_address);
         let prometheus = async {
-            let prom_address: SocketAddr = ([0, 0, 0, 0], server.configuration.prometheus_port).into();
-            info!("Prometheus listening on http://{}", prom_address);
             let listener = TcpListener::bind(prom_address).await.unwrap();
-
             loop {
                 let (stream, _) = listener.accept().await.unwrap();
                 let io = TokioIo::new(stream);
@@ -154,11 +141,10 @@ impl CacheusServer
             }
         };
 
+        let health_address: SocketAddr = ([0, 0, 0, 0], server.configuration.healthcheck_port).into();
+        info!("Healthcheck listening on http://{}", health_address);
         let healthcheck = async {
-            let health_address: SocketAddr = ([0, 0, 0, 0], server.configuration.healthcheck_port).into();
-            info!("Healthcheck listening on http://{}", health_address);
             let listener = TcpListener::bind(health_address).await.unwrap();
-
             loop {
                 let (stream, _) = listener.accept().await.unwrap();
                 let io = TokioIo::new(stream);
@@ -174,10 +160,7 @@ impl CacheusServer
             }
         };
 
-        // Log created middlewares
-        for middleware in &server.configuration.middlewares {
-            info!("Loaded middleware: {:?}", middleware);
-        }
+        info!("Ready to rock!");
 
         join!(service, prometheus, healthcheck);
 

@@ -26,6 +26,18 @@ pub enum MiddlewareEnum {
 }
 
 impl MiddlewareEnum {
+
+    pub async fn init(&mut self) {
+        match self {
+            MiddlewareEnum::Block { block_request } => block_request.init().await,
+            MiddlewareEnum::Cache { use_cache } => use_cache.init().await,
+            MiddlewareEnum::Forward { forward_request } => forward_request.init().await,
+            MiddlewareEnum::AddHeader { add_response_header } => add_response_header.init().await,
+            MiddlewareEnum::ReplaceResponseBody { replace_response_body } => replace_response_body.init().await,
+            MiddlewareEnum::Log { log } => log.init().await,
+        }
+    }
+
     pub async fn on_request(&self, context: &mut CallContext, request: &mut Request<BufferedBody>) -> Option<Response<BufferedBody>> {
         debug!("Processing middleware request: {:?}", self);
         match self {
