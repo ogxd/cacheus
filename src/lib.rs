@@ -32,6 +32,7 @@ use hyper_tls::HttpsConnector;
 use hyper_util::client::legacy::Client;
 use hyper_util::rt::TokioIo;
 use log::LevelFilter;
+use postcard::fixint::le;
 use serde::de::StdError;
 use metrics::Metrics;
 use simplelog::{ColorChoice, CombinedLogger, Config, TermLogger, TerminalMode};
@@ -43,9 +44,8 @@ use crate::config::CacheConfig;
 pub struct CacheusServer
 {
     configuration: Configuration,
-    caches: HashMap<String, (CacheConfig, HybridCache<u128, CachedResponse, GxBuildHasher>)>,
+    caches: Arc<HashMap<String, (CacheConfig, HybridCache<u128, CachedResponse, GxBuildHasher>)>>,
     metrics: Metrics,
-    client: Client<HttpsConnector<HttpConnector>, BufferedBody>,
 }
 
 impl CacheusServer
@@ -77,11 +77,6 @@ impl CacheusServer
 
         info!("Starting Cacheus server...");
 
-        let mut http = HttpConnector::new();
-        http.set_nodelay(true);
-        http.enforce_http(false);
-        let connector = HttpsConnector::new_with_connector(http);
-
         let mut caches = HashMap::new();
 
         // Initialize caches from configuration
@@ -91,19 +86,8 @@ impl CacheusServer
         
         let server = Arc::new(CacheusServer {
             configuration: configuration.clone(),
-            caches: caches,
+            caches: Arc::new(caches),
             metrics: Metrics::new(),
-            client: Client::builder(TokioExecutor)
-                .http2_only(configuration.http2_only)
-                // .pool_max_idle_per_host(configuration.max_idle_connections_per_host as usize)
-                // .http2_max_send_buf_size(128_000_000)
-                // .timer(hyper_util::rt::TokioTimer::new())
-                // .pool_timer(hyper_util::rt::TokioTimer::new())
-                // .pool_idle_timeout(std::time::Duration::from_secs(90))
-                // .http2_keep_alive_interval(Some(Duration::from_secs(300)))
-                // .retry_canceled_requests(false)
-                .set_host(false)
-                .build(connector),
         });
 
         let service = async {
@@ -160,7 +144,6 @@ impl CacheusServer
                 let io = TokioIo::new(stream);
                 let server = server.clone();
                 tokio::task::spawn(async move {
-                    //let server = server.clone();
                     if let Err(err) = http1::Builder::new()
                         .serve_connection(io, service_fn(move |req| CacheusServer::prometheus(server.clone(), req)))
                         .await
@@ -224,9 +207,10 @@ impl CacheusServer
         let mut context = CallContext {
             variables: HashMap::new(),
             stale_response: None,
+            caches: service.caches.clone(),
         };
 
-        let response = CacheusServer::call_internal_async(service.clone(), &mut context, request).await;
+        let response = CacheusServer::call_internal_async(&service.configuration, &mut context, request).await;
 
         let elapsed = timestamp.elapsed();
         let cache_status = context.variables.get("$cache_status").map(|s| s.as_str()).unwrap_or("na");
@@ -244,7 +228,7 @@ impl CacheusServer
         }
     }
 
-    async fn call_internal_async(service: Arc<CacheusServer>, context: &mut CallContext, request: Request<Incoming>,) -> Result<Response<BufferedBody>, CacheusError>
+    async fn call_internal_async(configuration: &Configuration, context: &mut CallContext, request: Request<Incoming>,) -> Result<Response<BufferedBody>, CacheusError>
     {
         // Request buffering
         let (parts, body) = request.into_parts();
@@ -255,9 +239,9 @@ impl CacheusServer
         let mut i = 0;
 
         // Evaluate middlewares until one returns a response
-        for middleware in &service.configuration.middlewares {
+        for middleware in &configuration.middlewares {
             i += 1;
-            if let Some(r) = middleware.on_request(context, service.clone(), &mut buffered_request).await {
+            if let Some(r) = middleware.on_request(context, &mut buffered_request).await {
                 response = Some(r);
                 break; // On the first middleware that returns a response, we stop processing
             }
@@ -265,7 +249,7 @@ impl CacheusServer
 
         // In reverse order, apply middlewares on the response, starting from the one that produced the response
         for j in (0..i).rev() {
-            service.configuration.middlewares[j].on_response(context, service.clone(), &buffered_request, &mut response).await;
+            configuration.middlewares[j].on_response(context, &buffered_request, &mut response).await;
         }
 
         if response.is_none() {
@@ -278,9 +262,11 @@ impl CacheusServer
     }
 }
 
+#[derive(Default)]
 pub struct CallContext {
     variables: HashMap<String, String>,
     stale_response: Option<Response<BufferedBody>>,
+    caches: Arc<HashMap<String, (CacheConfig, HybridCache<u128, CachedResponse, GxBuildHasher>)>>,
 }
 
 struct CacheusError

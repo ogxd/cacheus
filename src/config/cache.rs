@@ -24,7 +24,7 @@ pub enum CacheConfig {
 
 /// In-memory cache configuration
 #[serde_inline_default]
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Default, Serialize, Deserialize, Clone)]
 pub struct MemoryCache {
     pub name: String,
 
@@ -86,29 +86,29 @@ impl foyer::Code for CachedResponse {
     fn encode(&self, writer: &mut impl Write) -> std::result::Result<(), foyer::CodeError> {
         // Serialize status code (2 bytes)
         let status = self.response.status().as_u16();
-        writer.write_all(&status.to_le_bytes()).unwrap();
+        writer.write_all(&status.to_le_bytes())?;
 
         // Serialize headers
         let headers = self.response.headers();
         let header_count = headers.len() as u32;
-        writer.write_all(&header_count.to_le_bytes()).unwrap();
+        writer.write_all(&header_count.to_le_bytes())?;
         for (name, value) in headers.iter() {
             let name_bytes = name.as_str().as_bytes();
             let value_bytes = value.as_bytes();
 
-            writer.write_all(&(name_bytes.len() as u32).to_le_bytes()).unwrap();
-            writer.write_all(name_bytes).unwrap();
-            writer.write_all(&(value_bytes.len() as u32).to_le_bytes()).unwrap();
-            writer.write_all(value_bytes).unwrap();
+            writer.write_all(&(name_bytes.len() as u32).to_le_bytes())?;
+            writer.write_all(name_bytes)?;
+            writer.write_all(&(value_bytes.len() as u32).to_le_bytes())?;
+            writer.write_all(value_bytes)?;
         }
 
         // Serialize body
         let body_bytes = self.response.body().to_bytes();
-        writer.write_all(&(body_bytes.len() as u64).to_le_bytes()).unwrap();
-        writer.write_all(&body_bytes).unwrap();
+        writer.write_all(&(body_bytes.len() as u64).to_le_bytes())?;
+        writer.write_all(&body_bytes)?;
 
         // Serialize insertion epoch (8 bytes)
-        writer.write_all(&self.insertion_epoch.to_le_bytes()).unwrap();
+        writer.write_all(&self.insertion_epoch.to_le_bytes())?;
 
         Ok(())
     }
@@ -116,29 +116,29 @@ impl foyer::Code for CachedResponse {
     fn decode(reader: &mut impl Read) -> std::result::Result<CachedResponse, foyer::CodeError> {
         // Deserialize status code (2 bytes)
         let mut buf2 = [0u8; 2];
-        reader.read_exact(&mut buf2).unwrap();
-        let status = StatusCode::from_u16(u16::from_le_bytes(buf2)).map_err(|_| foyer::CodeError::Other("Could not decode status code".into())).unwrap();
+        reader.read_exact(&mut buf2)?;
+        let status = StatusCode::from_u16(u16::from_le_bytes(buf2)).map_err(|_| foyer::CodeError::Other("Could not decode status code".into()))?;
 
         // Deserialize headers
         let mut buf4 = [0u8; 4];
-        reader.read_exact(&mut buf4).unwrap();
+        reader.read_exact(&mut buf4)?;
         let header_count = u32::from_le_bytes(buf4);
 
         let mut headers = HeaderMap::new();
         for _ in 0..header_count {
-            reader.read_exact(&mut buf4).unwrap();
+            reader.read_exact(&mut buf4)?;
             let name_len = u32::from_le_bytes(buf4) as usize;
             let mut name_buf = vec![0u8; name_len];
-            reader.read_exact(&mut name_buf).unwrap();
-            let name = String::from_utf8(name_buf).map_err(|_| foyer::CodeError::Other("Could not decode header name".into())).unwrap();
+            reader.read_exact(&mut name_buf)?;
+            let name = String::from_utf8(name_buf).map_err(|_| foyer::CodeError::Other("Could not decode header name".into()))?;
 
-            reader.read_exact(&mut buf4).unwrap();
+            reader.read_exact(&mut buf4)?;
             let value_len = u32::from_le_bytes(buf4) as usize;
             let mut value_buf = vec![0u8; value_len];
-            reader.read_exact(&mut value_buf).unwrap();
+            reader.read_exact(&mut value_buf)?;
             headers.insert(
-                hyper::header::HeaderName::try_from(name).map_err(|_| foyer::CodeError::Other("Could not decode header name".into())).unwrap(),
-                hyper::header::HeaderValue::from_bytes(&value_buf).map_err(|_| foyer::CodeError::Other("Could not decode header value".into())).unwrap(),
+                hyper::header::HeaderName::try_from(name).map_err(|_| foyer::CodeError::Other("Could not decode header name".into()))?,
+                hyper::header::HeaderValue::from_bytes(&value_buf).map_err(|_| foyer::CodeError::Other("Could not decode header value".into()))?,
             );
         }
 
@@ -154,14 +154,14 @@ impl foyer::Code for CachedResponse {
 
         // Deserialize insertion epoch (8 bytes)
         let mut insertion_epoch_buf = [0u8; size_of::<u64>()];
-        reader.read_exact(&mut insertion_epoch_buf).unwrap();
+        reader.read_exact(&mut insertion_epoch_buf)?;
         let insertion_epoch = u64::from_le_bytes(insertion_epoch_buf);
 
         // Reconstruct response
         let mut response = Response::builder()
             .status(status)
             .body(buffered)
-            .map_err(|_| foyer::CodeError::Other("Could not decode body".into())).unwrap();
+            .map_err(|_| foyer::CodeError::Other("Could not decode body".into()))?;
 
         *response.headers_mut() = headers;
 
